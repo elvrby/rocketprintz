@@ -1,79 +1,111 @@
-import { router } from "expo-router";
+
 import { useState } from "react";
+
 import {
   ActivityIndicator,
-  Alert,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity,
   View,
 } from "react-native";
 
-import { login } from "../../firebase/auth";
+import { router } from "expo-router";
+
+import { useAuth } from "../../contexts/AuthContext";
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
+  const { login } = useAuth();
+
+  const [identifier, setIdentifier] =
+    useState("");
+
+  const [password, setPassword] =
+    useState("");
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
 
   const handleLogin = async () => {
-    // Validasi input
-    if (!email.trim() || !password) {
-      Alert.alert(
-        "Login",
-        "Email dan password wajib diisi."
+    setError("");
+
+    if (!identifier.trim()) {
+      setError(
+        "Masukkan email atau nama pengguna."
       );
+      return;
+    }
+
+    if (!password) {
+      setError("Masukkan password.");
       return;
     }
 
     try {
       setLoading(true);
 
-      // Login ke Firebase Authentication
-      await login(email.trim(), password);
+      /**
+       * identifier bisa berupa:
+       *
+       * email
+       * atau
+       * name
+       */
+      await login(
+        identifier,
+        password
+      );
 
-      // Kembali ke root.
-      // index.tsx akan menentukan halaman berdasarkan role.
+      /**
+       * Root index akan menentukan
+       * dashboard berdasarkan role.
+       */
       router.replace("/");
     } catch (error: any) {
-      console.error("Login error:", error);
+      console.error(
+        "Login error:",
+        error
+      );
 
-      let message = "Email atau password salah.";
+      let message =
+        "Email/nama atau password salah.";
 
-      switch (error?.code) {
-        case "auth/invalid-credential":
-          message = "Email atau password salah.";
-          break;
-
-        case "auth/user-not-found":
-          message = "Akun tidak ditemukan.";
-          break;
-
-        case "auth/wrong-password":
-          message = "Password salah.";
-          break;
-
-        case "auth/invalid-email":
-          message = "Format email tidak valid.";
-          break;
-
-        case "auth/user-disabled":
-          message = "Akun ini telah dinonaktifkan.";
-          break;
-
-        case "auth/too-many-requests":
-          message =
-            "Terlalu banyak percobaan login. Silakan coba lagi nanti.";
-          break;
-
-        case "auth/network-request-failed":
-          message =
-            "Tidak dapat terhubung ke internet. Periksa koneksi Anda.";
-          break;
+      if (
+        error?.code ===
+        "auth/invalid-credential"
+      ) {
+        message =
+          "Email/nama atau password salah.";
       }
 
-      Alert.alert("Login gagal", message);
+      if (
+        error?.code ===
+        "auth/user-not-found"
+      ) {
+        message =
+          "User tidak ditemukan.";
+      }
+
+      if (
+        error?.code ===
+        "auth/wrong-password"
+      ) {
+        message =
+          "Password salah.";
+      }
+
+      if (
+        error?.message ===
+        "Nama pengguna tidak ditemukan."
+      ) {
+        message =
+          "Nama pengguna tidak ditemukan.";
+      }
+
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -81,41 +113,43 @@ export default function LoginScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.logo}>
-        ROCKETPRINTZ
-      </Text>
+      <View style={styles.card}>
+        <Text style={styles.logo}>
+          ROCKETPRINTZ
+        </Text>
 
-      <Text style={styles.subtitle}>
-        Print Shop Management System
-      </Text>
+        <Text style={styles.title}>
+          Login
+        </Text>
 
-      <View style={styles.form}>
+        <Text style={styles.subtitle}>
+          Print Shop Management System
+        </Text>
+
         <TextInput
           style={styles.input}
-          placeholder="Email"
-          placeholderTextColor="#999"
-          value={email}
-          onChangeText={setEmail}
+          placeholder="Email atau nama pengguna"
+          value={identifier}
+          onChangeText={setIdentifier}
           autoCapitalize="none"
           autoCorrect={false}
-          keyboardType="email-address"
-          editable={!loading}
         />
 
         <TextInput
           style={styles.input}
           placeholder="Password"
-          placeholderTextColor="#999"
           value={password}
           onChangeText={setPassword}
           secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!loading}
-          onSubmitEditing={handleLogin}
         />
 
-        <Pressable
+        {error ? (
+          <Text style={styles.error}>
+            {error}
+          </Text>
+        ) : null}
+
+        <TouchableOpacity
           style={[
             styles.button,
             loading && styles.buttonDisabled,
@@ -130,7 +164,7 @@ export default function LoginScreen() {
               Login
             </Text>
           )}
-        </Pressable>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -141,48 +175,59 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    padding: 24,
+    backgroundColor: "#f5f5f5",
+    padding: 20,
+  },
+
+  card: {
+    width: "100%",
+    maxWidth: 420,
+    padding: 30,
+    borderRadius: 12,
     backgroundColor: "#fff",
   },
 
   logo: {
-    fontSize: 28,
+    textAlign: "center",
+    fontSize: 24,
     fontWeight: "800",
-    letterSpacing: 1,
-    color: "#111",
+    marginBottom: 10,
+  },
+
+  title: {
+    textAlign: "center",
+    fontSize: 22,
+    fontWeight: "700",
+    marginBottom: 5,
   },
 
   subtitle: {
-    marginTop: 8,
-    marginBottom: 32,
-    fontSize: 14,
-    color: "#666",
-  },
-
-  form: {
-    width: "100%",
-    maxWidth: 400,
+    textAlign: "center",
+    color: "#777",
+    marginBottom: 25,
   },
 
   input: {
-    height: 52,
+    height: 48,
     borderWidth: 1,
     borderColor: "#ddd",
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    marginBottom: 14,
-    fontSize: 16,
-    backgroundColor: "#fafafa",
-    color: "#111",
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+    backgroundColor: "#fff",
+  },
+
+  error: {
+    color: "#d32f2f",
+    marginBottom: 12,
   },
 
   button: {
-    height: 52,
-    borderRadius: 10,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: "#111",
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#111",
-    marginTop: 4,
   },
 
   buttonDisabled: {

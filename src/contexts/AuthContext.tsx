@@ -1,4 +1,3 @@
-
 import React, {
   createContext,
   useContext,
@@ -16,6 +15,7 @@ import {
 import {
   doc,
   getDoc,
+  onSnapshot,
 } from "firebase/firestore";
 
 import { auth, db } from "../firebase/config";
@@ -49,27 +49,23 @@ const AuthContext = createContext<
   AuthContextType | undefined
 >(undefined);
 
-/**
- * Mengubah input login menjadi format yang konsisten.
- *
- * Contoh:
- * " Alfa "       -> "alfa"
- * "ALFA"         -> "alfa"
- * "Alfa@gmail.com" -> "alfa@gmail.com"
- */
+/* =========================
+   NORMALIZE LOGIN INPUT
+========================= */
+
 function normalizeLoginInput(value: string) {
   return value.trim().toLowerCase();
 }
 
-/**
- * Mengambil profile user dari:
- *
- * users/{uid}
- */
+/* =========================
+   GET USER PROFILE
+========================= */
+
 async function getUserProfile(
   uid: string
 ): Promise<UserProfile | null> {
   const userRef = doc(db, "users", uid);
+
   const snapshot = await getDoc(userRef);
 
   if (!snapshot.exists()) {
@@ -86,65 +82,161 @@ async function getUserProfile(
   };
 }
 
+/* =========================
+   AUTH PROVIDER
+========================= */
+
 export function AuthProvider({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] =
+    useState<User | null>(null);
+
   const [profile, setProfile] =
     useState<UserProfile | null>(null);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] =
+    useState(true);
 
-  /**
-   * Mengecek user Firebase saat aplikasi dibuka.
-   */
+  /* =========================
+     AUTH STATE LISTENER
+  ========================= */
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(
-      auth,
-      async (firebaseUser) => {
-        try {
+    let unsubscribeProfile:
+      | (() => void)
+      | null = null;
+
+    const unsubscribeAuth =
+      onAuthStateChanged(
+        auth,
+        (firebaseUser) => {
+          console.log(
+            "AUTH STATE:",
+            firebaseUser
+              ? firebaseUser.email
+              : "LOGGED OUT"
+          );
+
+          /* =========================
+             CLEANUP PROFILE LISTENER
+          ========================= */
+
+          if (unsubscribeProfile) {
+            unsubscribeProfile();
+            unsubscribeProfile = null;
+          }
+
+          /* =========================
+             USER LOGGED OUT
+          ========================= */
+
           if (!firebaseUser) {
+            console.log(
+              "AuthContext: user logout"
+            );
+
             setUser(null);
             setProfile(null);
             setLoading(false);
+
             return;
           }
 
+          /* =========================
+             USER LOGGED IN
+          ========================= */
+
           setUser(firebaseUser);
+          setLoading(true);
 
-          const userProfile =
-            await getUserProfile(firebaseUser.uid);
-
-          setProfile(userProfile);
-        } catch (error) {
-          console.error(
-            "Error loading user profile:",
-            error
+          const userRef = doc(
+            db,
+            "users",
+            firebaseUser.uid
           );
 
-          setProfile(null);
-        } finally {
-          setLoading(false);
-        }
-      }
-    );
+          /* =========================
+             FIRESTORE PROFILE LISTENER
+          ========================= */
 
-    return unsubscribe;
+          unsubscribeProfile =
+            onSnapshot(
+              userRef,
+              (snapshot) => {
+                if (!snapshot.exists()) {
+                  console.log(
+                    "Profile tidak ditemukan"
+                  );
+
+                  setProfile(null);
+                  setLoading(false);
+
+                  return;
+                }
+
+                const data =
+                  snapshot.data();
+
+                const updatedProfile: UserProfile =
+                  {
+                    uid: firebaseUser.uid,
+
+                    name:
+                      data.name ?? "",
+
+                    email:
+                      data.email ??
+                      firebaseUser.email ??
+                      "",
+
+                    role:
+                      data.role as UserRole,
+                  };
+
+                console.log(
+                  "Profile loaded:",
+                  updatedProfile
+                );
+
+                setProfile(
+                  updatedProfile
+                );
+
+                setLoading(false);
+              },
+              (error) => {
+                console.error(
+                  "Realtime profile listener error:",
+                  error
+                );
+
+                setProfile(null);
+                setLoading(false);
+              }
+            );
+        }
+      );
+
+    /* =========================
+       CLEANUP
+    ========================= */
+
+    return () => {
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+      }
+
+      unsubscribeAuth();
+    };
   }, []);
 
-  /**
-   * LOGIN
-   *
-   * Bisa menggunakan:
-   *
-   * email:
-   * admin@gmail.com
-   *
-   * atau name:
-   * Admin
-   */
+  /* =========================
+     LOGIN
+  ========================= */
+
   const login = async (
     identifier: string,
     password: string
@@ -154,16 +246,13 @@ export function AuthProvider({
 
     let email = value;
 
-    /**
-     * Cek apakah input adalah email.
-     */
     const isEmail =
       value.includes("@");
 
-    /**
-     * Kalau bukan email,
-     * anggap sebagai name.
-     */
+    /* =========================
+       LOGIN USING NAME
+    ========================= */
+
     if (!isEmail) {
       const loginNameRef = doc(
         db,
@@ -183,7 +272,8 @@ export function AuthProvider({
       const loginNameData =
         loginNameSnapshot.data();
 
-      email = loginNameData.email;
+      email =
+        loginNameData.email;
 
       if (!email) {
         throw new Error(
@@ -192,10 +282,10 @@ export function AuthProvider({
       }
     }
 
-    /**
-     * Firebase Authentication
-     * tetap menggunakan email + password.
-     */
+    /* =========================
+       FIREBASE LOGIN
+    ========================= */
+
     await signInWithEmailAndPassword(
       auth,
       email,
@@ -203,15 +293,59 @@ export function AuthProvider({
     );
   };
 
-  /**
-   * LOGOUT
-   */
-  const logout = async () => {
-    await signOut(auth);
+  /* =========================
+     LOGOUT
+  ========================= */
 
-    setUser(null);
-    setProfile(null);
+  const logout = async () => {
+    try {
+      console.log(
+        "AuthContext: mulai logout..."
+      );
+
+      /*
+       * Hentikan listener profile
+       * sebelum logout.
+       */
+      if (auth.currentUser) {
+        console.log(
+          "Current user:",
+          auth.currentUser.email
+        );
+      }
+
+      /*
+       * Logout dari Firebase.
+       *
+       * onAuthStateChanged akan
+       * otomatis menerima null.
+       */
+      await signOut(auth);
+
+      /*
+       * Bersihkan state secara manual
+       * sebagai tambahan keamanan.
+       */
+      setUser(null);
+      setProfile(null);
+      setLoading(false);
+
+      console.log(
+        "AuthContext: logout berhasil"
+      );
+    } catch (error) {
+      console.error(
+        "AuthContext: logout error:",
+        error
+      );
+
+      throw error;
+    }
   };
+
+  /* =========================
+     PROVIDER
+  ========================= */
 
   return (
     <AuthContext.Provider
@@ -227,6 +361,10 @@ export function AuthProvider({
     </AuthContext.Provider>
   );
 }
+
+/* =========================
+   USE AUTH
+========================= */
 
 export function useAuth() {
   const context =

@@ -1,9 +1,12 @@
+// src/app/(admin)/users.tsx
+
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -39,8 +42,15 @@ export default function AdminUsers() {
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
 
   const [name, setName] = useState("");
-  const [role, setRole] = useState<"admin" | "operator" | "supervisor">("operator");
+  const [role, setRole] =
+    useState<"admin" | "operator" | "supervisor">("operator");
+
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  /* =====================================================
+     GET USERS
+  ===================================================== */
 
   useEffect(() => {
     const usersRef = collection(db, "users");
@@ -50,6 +60,7 @@ export default function AdminUsers() {
       (snapshot) => {
         const data: UserProfile[] = snapshot.docs.map((item) => {
           const value = item.data();
+
           return {
             id: item.id,
             name: value.name ?? "",
@@ -62,14 +73,24 @@ export default function AdminUsers() {
         setLoading(false);
       },
       (error) => {
-        console.error(error);
+        console.error("Get users error:", error);
+
         setLoading(false);
-        Alert.alert("Error", "Gagal mengambil data user.");
+
+        if (Platform.OS === "web") {
+          window.alert("Gagal mengambil data user.");
+        } else {
+          Alert.alert("Error", "Gagal mengambil data user.");
+        }
       }
     );
 
     return unsubscribe;
   }, []);
+
+  /* =====================================================
+     OPEN EDIT
+  ===================================================== */
 
   const openEdit = (user: UserProfile) => {
     setSelectedUser(user);
@@ -78,63 +99,190 @@ export default function AdminUsers() {
     setModalVisible(true);
   };
 
+  /* =====================================================
+     CLOSE MODAL
+  ===================================================== */
+
+  const closeModal = () => {
+    if (saving) return;
+
+    setModalVisible(false);
+    setSelectedUser(null);
+    setName("");
+    setRole("operator");
+  };
+
+  /* =====================================================
+     SAVE USER
+  ===================================================== */
+
   const saveUser = async () => {
     if (!selectedUser) return;
 
     if (!name.trim()) {
-      Alert.alert("Error", "Nama wajib diisi.");
+      if (Platform.OS === "web") {
+        window.alert("Nama wajib diisi.");
+      } else {
+        Alert.alert("Error", "Nama wajib diisi.");
+      }
+
       return;
     }
 
     try {
       setSaving(true);
+
       await updateDoc(doc(db, "users", selectedUser.id), {
         name: name.trim(),
         role,
       });
 
-      setModalVisible(false);
-      setSelectedUser(null);
+      closeModal();
     } catch (error) {
-      console.error(error);
-      Alert.alert("Error", "Gagal mengubah user.");
+      console.error("Update user error:", error);
+
+      if (Platform.OS === "web") {
+        window.alert("Gagal mengubah user.");
+      } else {
+        Alert.alert("Error", "Gagal mengubah user.");
+      }
     } finally {
       setSaving(false);
     }
   };
 
+  /* =====================================================
+     DELETE USER - WEB + MOBILE
+  ===================================================== */
+
   const deleteUserProfile = (user: UserProfile) => {
+    // Jangan izinkan delete ketika proses delete sedang berjalan
+    if (deletingId) return;
+
+    /*
+     * ===================================================
+     * WEB
+     * ===================================================
+     *
+     * React Native Web lebih aman menggunakan
+     * window.confirm() daripada Alert.alert().
+     */
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm(
+        `Apakah Anda yakin ingin menghapus profile "${user.name}"?\n\nEmail: ${user.email}`
+      );
+
+      if (!confirmed) {
+        return;
+      }
+
+      handleDeleteUser(user);
+      return;
+    }
+
+    /*
+     * ===================================================
+     * MOBILE
+     * ===================================================
+     */
+
     Alert.alert(
       "Hapus User",
       `Apakah Anda yakin ingin menghapus profile ${user.name}?`,
       [
-        { text: "Batal", style: "cancel" },
+        {
+          text: "Batal",
+          style: "cancel",
+        },
         {
           text: "Hapus",
           style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteDoc(doc(db, "users", user.id));
-            } catch (error) {
-              console.error(error);
-              Alert.alert("Error", "Gagal menghapus profile.");
-            }
+          onPress: () => {
+            handleDeleteUser(user);
           },
         },
       ]
     );
   };
 
+  /* =====================================================
+     ACTUAL DELETE FIRESTORE
+  ===================================================== */
+
+  const handleDeleteUser = async (user: UserProfile) => {
+    if (deletingId) return;
+
+    try {
+      setDeletingId(user.id);
+
+      console.log("Menghapus user:", user.id);
+
+      await deleteDoc(doc(db, "users", user.id));
+
+      console.log("User berhasil dihapus:", user.id);
+
+      /*
+       * Tidak perlu setUsers secara manual.
+       *
+       * Karena kita menggunakan onSnapshot(),
+       * Firestore akan otomatis mengirim data terbaru
+       * dan user yang dihapus akan hilang dari list.
+       */
+
+      if (Platform.OS === "web") {
+        window.alert(`User "${user.name}" berhasil dihapus.`);
+      } else {
+        Alert.alert("Berhasil", `User "${user.name}" berhasil dihapus.`);
+      }
+    } catch (error: any) {
+      console.error("Delete user error:", error);
+
+      let message = "Gagal menghapus user.";
+
+      if (error?.code === "permission-denied") {
+        message =
+          "Anda tidak memiliki izin untuk menghapus user dari Firestore.";
+      }
+
+      if (Platform.OS === "web") {
+        window.alert(message);
+      } else {
+        Alert.alert("Error", message);
+      }
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  /* =====================================================
+     ROLE BADGE
+  ===================================================== */
+
   const getRoleBadgeStyle = (userRole: string) => {
     switch (userRole) {
       case "admin":
-        return { bg: "#0f172a", text: "#ffffff" };
+        return {
+          bg: "#0f172a",
+          text: "#ffffff",
+        };
+
       case "supervisor":
-        return { bg: "#fef3c7", text: "#b45309" };
+        return {
+          bg: "#fef3c7",
+          text: "#b45309",
+        };
+
       default:
-        return { bg: "#e0f2fe", text: "#0369a1" };
+        return {
+          bg: "#e0f2fe",
+          text: "#0369a1",
+        };
     }
   };
+
+  /* =====================================================
+     LOADING
+  ===================================================== */
 
   if (loading) {
     return (
@@ -144,17 +292,24 @@ export default function AdminUsers() {
     );
   }
 
+  /* =====================================================
+     UI
+  ===================================================== */
+
   return (
     <View style={styles.container}>
-      {/* HEADER SECTION */}
+      {/* HEADER */}
+
       <View style={styles.header}>
         <Text style={styles.title}>Pengelola User</Text>
+
         <Text style={styles.subtitle}>
           Kelola hak akses dan peran pengguna sistem
         </Text>
       </View>
 
       {/* USER LIST */}
+
       <FlatList
         data={users}
         keyExtractor={(item) => item.id}
@@ -162,40 +317,89 @@ export default function AdminUsers() {
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Ionicons name="people-outline" size={48} color="#cbd5e1" />
-            <Text style={styles.emptyText}>Belum ada pengguna terdaftar.</Text>
+            <Ionicons
+              name="people-outline"
+              size={48}
+              color="#cbd5e1"
+            />
+
+            <Text style={styles.emptyText}>
+              Belum ada pengguna terdaftar.
+            </Text>
           </View>
         }
         renderItem={({ item }) => {
           const badgeStyle = getRoleBadgeStyle(item.role);
-          const initials = item.name ? item.name.charAt(0).toUpperCase() : "U";
+
+          const initials = item.name
+            ? item.name.charAt(0).toUpperCase()
+            : "U";
+
+          const isDeleting = deletingId === item.id;
 
           return (
             <View style={styles.card}>
+              {/* CARD HEADER */}
+
               <View style={styles.cardHeader}>
-                {/* AVATAR INITIALS */}
+                {/* AVATAR */}
+
                 <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{initials}</Text>
+                  <Text style={styles.avatarText}>
+                    {initials}
+                  </Text>
                 </View>
 
-                {/* USER DETAILS */}
+                {/* USER INFO */}
+
                 <View style={styles.userInfo}>
-                  <Text style={styles.name}>{item.name}</Text>
-                  <Text style={styles.email}>{item.email}</Text>
+                  <Text
+                    style={styles.name}
+                    numberOfLines={1}
+                  >
+                    {item.name || "Tanpa Nama"}
+                  </Text>
+
+                  <Text
+                    style={styles.email}
+                    numberOfLines={1}
+                  >
+                    {item.email || "-"}
+                  </Text>
                 </View>
 
-                {/* ROLE BADGE */}
-                <View style={[styles.roleBadge, { backgroundColor: badgeStyle.bg }]}>
-                  <Text style={[styles.roleText, { color: badgeStyle.text }]}>
+                {/* ROLE */}
+
+                <View
+                  style={[
+                    styles.roleBadge,
+                    {
+                      backgroundColor: badgeStyle.bg,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.roleText,
+                      {
+                        color: badgeStyle.text,
+                      },
+                    ]}
+                  >
                     {item.role}
                   </Text>
                 </View>
               </View>
 
+              {/* DIVIDER */}
+
               <View style={styles.divider} />
 
               {/* ACTIONS */}
+
               <View style={styles.actions}>
+                {/* EDIT */}
+
                 <Pressable
                   style={({ pressed }) => [
                     styles.actionButton,
@@ -203,22 +407,53 @@ export default function AdminUsers() {
                     pressed && styles.pressedState,
                   ]}
                   onPress={() => openEdit(item)}
+                  disabled={!!deletingId}
                 >
-                  <Ionicons name="create-outline" size={16} color="#334155" />
-                  <Text style={styles.actionText}>Edit Role</Text>
+                  <Ionicons
+                    name="create-outline"
+                    size={16}
+                    color="#334155"
+                  />
+
+                  <Text style={styles.actionText}>
+                    Edit Role
+                  </Text>
                 </Pressable>
+
+                {/* DELETE */}
 
                 <Pressable
                   style={({ pressed }) => [
                     styles.actionButton,
                     styles.deleteButton,
-                    pressed && styles.pressedState,
+                    isDeleting && styles.buttonDisabled,
+                    pressed &&
+                      !isDeleting &&
+                      styles.pressedState,
                   ]}
                   onPress={() => deleteUserProfile(item)}
+                  disabled={!!deletingId}
                 >
-                  <Ionicons name="trash-outline" size={16} color="#ef4444" />
-                  <Text style={[styles.actionText, styles.deleteText]}>
-                    Hapus
+                  {isDeleting ? (
+                    <ActivityIndicator
+                      size="small"
+                      color="#ef4444"
+                    />
+                  ) : (
+                    <Ionicons
+                      name="trash-outline"
+                      size={16}
+                      color="#ef4444"
+                    />
+                  )}
+
+                  <Text
+                    style={[
+                      styles.actionText,
+                      styles.deleteText,
+                    ]}
+                  >
+                    {isDeleting ? "Menghapus..." : "Hapus"}
                   </Text>
                 </Pressable>
               </View>
@@ -227,56 +462,101 @@ export default function AdminUsers() {
         }}
       />
 
-      {/* MODAL EDIT USER */}
+      {/* =================================================
+          EDIT USER MODAL
+      ================================================= */}
+
       <Modal
         visible={modalVisible}
         animationType="fade"
         transparent
-        onRequestClose={() => setModalVisible(false)}
+        onRequestClose={closeModal}
       >
         <View style={styles.modalBackground}>
           <View style={styles.modalCard}>
+            {/* MODAL HEADER */}
+
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Edit Profile User</Text>
+              <Text style={styles.modalTitle}>
+                Edit Profile User
+              </Text>
+
               <Pressable
-                onPress={() => setModalVisible(false)}
+                onPress={closeModal}
                 hitSlop={8}
+                disabled={saving}
               >
-                <Ionicons name="close" size={20} color="#64748b" />
+                <Ionicons
+                  name="close"
+                  size={20}
+                  color="#64748b"
+                />
               </Pressable>
             </View>
 
+            {/* NAME */}
+
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Nama Pengguna</Text>
+              <Text style={styles.label}>
+                Nama Pengguna
+              </Text>
+
               <TextInput
                 style={styles.input}
                 placeholder="Masukkan nama"
                 placeholderTextColor="#94a3b8"
                 value={name}
                 onChangeText={setName}
+                editable={!saving}
               />
             </View>
 
+            {/* ROLE */}
+
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Pilih Role / Akses</Text>
+              <Text style={styles.label}>
+                Pilih Role / Akses
+              </Text>
+
               <View style={styles.roleOptions}>
                 {roles.map((item) => {
                   const isSelected = role === item;
+
                   return (
                     <Pressable
                       key={item}
                       style={[
                         styles.roleOption,
-                        isSelected && styles.roleOptionSelected,
+                        isSelected &&
+                          styles.roleOptionSelected,
                       ]}
                       onPress={() => setRole(item)}
+                      disabled={saving}
                     >
                       <View style={styles.radioContainer}>
-                        <View style={[styles.radioOuter, isSelected && styles.radioOuterSelected]}>
-                          {isSelected && <View style={styles.radioInner} />}
+                        <View
+                          style={[
+                            styles.radioOuter,
+                            isSelected &&
+                              styles.radioOuterSelected,
+                          ]}
+                        >
+                          {isSelected && (
+                            <View
+                              style={styles.radioInner}
+                            />
+                          )}
                         </View>
-                        <Text style={[styles.roleOptionText, isSelected && styles.roleOptionTextSelected]}>
-                          {item.charAt(0).toUpperCase() + item.slice(1)}
+
+                        <Text
+                          style={[
+                            styles.roleOptionText,
+                            isSelected &&
+                              styles.roleOptionTextSelected,
+                          ]}
+                        >
+                          {item.charAt(0).toUpperCase() +
+                            item.slice(1)}
                         </Text>
                       </View>
                     </Pressable>
@@ -285,30 +565,46 @@ export default function AdminUsers() {
               </View>
             </View>
 
+            {/* MODAL ACTIONS */}
+
             <View style={styles.modalActions}>
+              {/* CANCEL */}
+
               <Pressable
                 style={({ pressed }) => [
                   styles.modalCancelButton,
                   pressed && styles.pressedState,
                 ]}
-                onPress={() => setModalVisible(false)}
+                onPress={closeModal}
+                disabled={saving}
               >
-                <Text style={styles.modalCancelText}>Batal</Text>
+                <Text style={styles.modalCancelText}>
+                  Batal
+                </Text>
               </Pressable>
+
+              {/* SAVE */}
 
               <Pressable
                 style={({ pressed }) => [
                   styles.modalSaveButton,
                   saving && styles.buttonDisabled,
-                  pressed && !saving && styles.pressedState,
+                  pressed &&
+                    !saving &&
+                    styles.pressedState,
                 ]}
                 onPress={saveUser}
                 disabled={saving}
               >
                 {saving ? (
-                  <ActivityIndicator color="#ffffff" size="small" />
+                  <ActivityIndicator
+                    color="#ffffff"
+                    size="small"
+                  />
                 ) : (
-                  <Text style={styles.modalSaveText}>Simpan Perubahan</Text>
+                  <Text style={styles.modalSaveText}>
+                    Simpan Perubahan
+                  </Text>
                 )}
               </Pressable>
             </View>
@@ -376,7 +672,9 @@ const styles = StyleSheet.create({
     opacity: 0.75,
   },
 
-  /* CARD STYLES */
+  /* =================================================
+     CARD
+  ================================================= */
 
   card: {
     backgroundColor: "#ffffff",
@@ -384,10 +682,15 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: "#f1f5f9",
+
     shadowColor: "#0f172a",
-    shadowOffset: { width: 0, height: 4 },
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
     shadowOpacity: 0.03,
     shadowRadius: 10,
+
     elevation: 2,
   },
 
@@ -414,6 +717,7 @@ const styles = StyleSheet.create({
 
   userInfo: {
     flex: 1,
+    minWidth: 0,
   },
 
   name: {
@@ -446,7 +750,9 @@ const styles = StyleSheet.create({
     marginVertical: 12,
   },
 
-  /* CARD ACTIONS */
+  /* =================================================
+     ACTIONS
+  ================================================= */
 
   actions: {
     flexDirection: "row",
@@ -481,7 +787,9 @@ const styles = StyleSheet.create({
     color: "#ef4444",
   },
 
-  /* MODAL STYLES */
+  /* =================================================
+     MODAL
+  ================================================= */
 
   modalBackground: {
     flex: 1,
@@ -498,10 +806,15 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 24,
     gap: 20,
+
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
     shadowOpacity: 0.1,
     shadowRadius: 20,
+
     elevation: 5,
   },
 
@@ -537,6 +850,10 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     backgroundColor: "#f8fafc",
   },
+
+  /* =================================================
+     ROLE OPTIONS
+  ================================================= */
 
   roleOptions: {
     gap: 8,
@@ -592,6 +909,10 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     fontWeight: "600",
   },
+
+  /* =================================================
+     MODAL ACTIONS
+  ================================================= */
 
   modalActions: {
     flexDirection: "row",

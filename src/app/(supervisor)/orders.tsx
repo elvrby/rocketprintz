@@ -1,4 +1,11 @@
-import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
+// src/app/(supervisor)/orders.tsx
+
+import {
+  collection,
+  onSnapshot,
+  orderBy,
+  query,
+} from "firebase/firestore";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -12,6 +19,7 @@ import { db } from "../../firebase/config";
 
 type Order = {
   id: string;
+  orderCode?: string;
   customerName: string;
   product: string;
   quantity: number;
@@ -36,16 +44,20 @@ export default function SupervisorOrders() {
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const data: Order[] = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...(doc.data() as Omit<Order, "id">),
-        }));
+        const data: Order[] = snapshot.docs.map((document) => {
+          const orderData = document.data();
+
+          return {
+            id: document.id,
+            ...(orderData as Omit<Order, "id">),
+          };
+        });
 
         setOrders(data);
         setLoading(false);
       },
       (error) => {
-        console.error("Load orders error:", error);
+        console.error("Load supervisor orders error:", error);
         setLoading(false);
       }
     );
@@ -64,8 +76,32 @@ export default function SupervisorOrders() {
       case "cancelled":
         return styles.statusCancelled;
 
+      case "processing":
+        return styles.statusProcessing;
+
+      case "pending":
       default:
         return styles.statusPending;
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case "completed":
+        return "Completed";
+
+      case "running":
+        return "Running";
+
+      case "processing":
+        return "Processing";
+
+      case "cancelled":
+        return "Cancelled";
+
+      case "pending":
+      default:
+        return "Pending";
     }
   };
 
@@ -73,7 +109,9 @@ export default function SupervisorOrders() {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" />
-        <Text style={styles.loadingText}>Memuat order...</Text>
+        <Text style={styles.loadingText}>
+          Memuat order...
+        </Text>
       </View>
     );
   }
@@ -85,89 +123,123 @@ export default function SupervisorOrders() {
         styles.content,
         isDesktop && styles.desktopContent,
       ]}
+      showsVerticalScrollIndicator={false}
     >
+      {/* HEADER */}
       <View style={styles.header}>
-        <View>
+        <View style={styles.headerLeft}>
           <Text style={styles.title}>Orders</Text>
+
           <Text style={styles.subtitle}>
             Monitoring seluruh pesanan produksi
           </Text>
         </View>
 
         <View style={styles.totalBox}>
-          <Text style={styles.totalNumber}>{orders.length}</Text>
-          <Text style={styles.totalLabel}>Total Order</Text>
+          <Text style={styles.totalNumber}>
+            {orders.length}
+          </Text>
+
+          <Text style={styles.totalLabel}>
+            Total Order
+          </Text>
         </View>
       </View>
 
+      {/* EMPTY */}
       {orders.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={styles.emptyTitle}>Belum ada order</Text>
+          <Text style={styles.emptyTitle}>
+            Belum ada order
+          </Text>
+
           <Text style={styles.emptyText}>
             Data order akan muncul di halaman ini.
           </Text>
         </View>
       ) : (
+        /* ORDER LIST */
         <View
           style={[
             styles.grid,
             isDesktop && styles.gridDesktop,
           ]}
         >
-          {orders.map((order) => (
-            <View
-              key={order.id}
-              style={[
-                styles.card,
-                isDesktop && styles.cardDesktop,
-              ]}
-            >
-              <View style={styles.cardTop}>
-                <View style={styles.orderNumber}>
-                  <Text style={styles.orderNumberText}>
-                    #{order.id.slice(0, 6).toUpperCase()}
-                  </Text>
+          {orders.map((order) => {
+            const displayOrderCode =
+              order.orderCode ||
+              `SO-${order.id.slice(0, 6).toUpperCase()}`;
+
+            return (
+              <View
+                key={order.id}
+                style={[
+                  styles.card,
+                  isDesktop && styles.cardDesktop,
+                ]}
+              >
+                {/* TOP */}
+                <View style={styles.cardTop}>
+                  <View style={styles.orderCodeBox}>
+                    <Text style={styles.orderCodeLabel}>
+                      ORDER CODE
+                    </Text>
+
+                    <Text style={styles.orderCode}>
+                      {displayOrderCode}
+                    </Text>
+                  </View>
+
+                  <View
+                    style={[
+                      styles.status,
+                      getStatusStyle(order.status),
+                    ]}
+                  >
+                    <Text style={styles.statusText}>
+                      {getStatusLabel(order.status)}
+                    </Text>
+                  </View>
                 </View>
 
-                <View
-                  style={[
-                    styles.status,
-                    getStatusStyle(order.status),
-                  ]}
-                >
-                  <Text style={styles.statusText}>
-                    {order.status || "pending"}
-                  </Text>
+                {/* CUSTOMER */}
+                <Text style={styles.customer}>
+                  {order.customerName || "-"}
+                </Text>
+
+                {/* PRODUCT */}
+                <Text style={styles.product}>
+                  {order.product || "-"}
+                </Text>
+
+                {/* DIVIDER */}
+                <View style={styles.divider} />
+
+                {/* INFO */}
+                <View style={styles.infoRow}>
+                  <View style={styles.infoItem}>
+                    <Text style={styles.label}>
+                      Quantity
+                    </Text>
+
+                    <Text style={styles.value}>
+                      {order.quantity ?? 0}
+                    </Text>
+                  </View>
+
+                  <View style={styles.infoItem}>
+                    <Text style={styles.label}>
+                      Deadline
+                    </Text>
+
+                    <Text style={styles.value}>
+                      {order.deadline || "-"}
+                    </Text>
+                  </View>
                 </View>
               </View>
-
-              <Text style={styles.customer}>
-                {order.customerName}
-              </Text>
-
-              <Text style={styles.product}>
-                {order.product}
-              </Text>
-
-              <View style={styles.divider} />
-
-              <View style={styles.infoRow}>
-                <View>
-                  <Text style={styles.label}>Quantity</Text>
-                  <Text style={styles.value}>
-                    {order.quantity}
-                  </Text>
-                </View>
-
-                <View>
-                  <Text style={styles.label}>Deadline</Text>
-                  <Text style={styles.value}>
-                    {order.deadline || "-"}
-                  </Text>
-                </View>
-              </View>
-            </View>
-          ))}
+            );
+          })}
         </View>
       )}
     </ScrollView>
@@ -192,11 +264,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
   },
 
+  /* HEADER */
+
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 24,
+  },
+
+  headerLeft: {
+    flex: 1,
   },
 
   title: {
@@ -211,7 +289,10 @@ const styles = StyleSheet.create({
     color: "#6b7280",
   },
 
+  /* TOTAL */
+
   totalBox: {
+    minWidth: 90,
     backgroundColor: "#ffffff",
     borderRadius: 14,
     paddingHorizontal: 18,
@@ -233,6 +314,8 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
+  /* GRID */
+
   grid: {
     gap: 14,
   },
@@ -241,6 +324,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
   },
+
+  /* CARD */
 
   card: {
     backgroundColor: "#ffffff",
@@ -254,35 +339,48 @@ const styles = StyleSheet.create({
     width: "48.5%",
   },
 
+  /* CARD TOP */
+
   cardTop: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
   },
 
-  orderNumber: {
+  /* ORDER CODE */
+
+  orderCodeBox: {
     backgroundColor: "#f3f4f6",
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 8,
+    borderRadius: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
   },
 
-  orderNumberText: {
-    fontSize: 11,
+  orderCodeLabel: {
+    fontSize: 8,
     fontWeight: "600",
-    color: "#6b7280",
+    color: "#9ca3af",
+    letterSpacing: 0.6,
+    marginBottom: 2,
   },
+
+  orderCode: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#111827",
+  },
+
+  /* STATUS */
 
   status: {
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
     borderRadius: 20,
   },
 
   statusText: {
     fontSize: 11,
     fontWeight: "600",
-    textTransform: "capitalize",
   },
 
   statusCompleted: {
@@ -293,6 +391,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#dbeafe",
   },
 
+  statusProcessing: {
+    backgroundColor: "#e0e7ff",
+  },
+
   statusCancelled: {
     backgroundColor: "#fee2e2",
   },
@@ -300,6 +402,8 @@ const styles = StyleSheet.create({
   statusPending: {
     backgroundColor: "#fef3c7",
   },
+
+  /* CUSTOMER */
 
   customer: {
     marginTop: 18,
@@ -314,15 +418,23 @@ const styles = StyleSheet.create({
     color: "#6b7280",
   },
 
+  /* DIVIDER */
+
   divider: {
     height: 1,
     backgroundColor: "#f0f0f0",
     marginVertical: 16,
   },
 
+  /* INFORMATION */
+
   infoRow: {
     flexDirection: "row",
     gap: 50,
+  },
+
+  infoItem: {
+    minWidth: 90,
   },
 
   label: {
@@ -337,6 +449,8 @@ const styles = StyleSheet.create({
     color: "#374151",
   },
 
+  /* LOADING */
+
   center: {
     flex: 1,
     justifyContent: "center",
@@ -348,6 +462,8 @@ const styles = StyleSheet.create({
     marginTop: 10,
     color: "#6b7280",
   },
+
+  /* EMPTY */
 
   empty: {
     backgroundColor: "#ffffff",

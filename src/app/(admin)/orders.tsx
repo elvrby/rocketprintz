@@ -1,7 +1,10 @@
+// src/app/(admin)/orders.tsx
 import DateTimePicker, {
   DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
+
 import { useEffect, useState } from "react";
+
 import {
   ActivityIndicator,
   Alert,
@@ -131,6 +134,48 @@ const generateUniqueOrderCode = async () => {
 };
 
 // ======================================================
+// DATE HELPERS
+// ======================================================
+
+const formatDateForInput = (date: Date) => {
+  const year = date.getFullYear();
+
+  const month = String(
+    date.getMonth() + 1
+  ).padStart(2, "0");
+
+  const day = String(
+    date.getDate()
+  ).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+};
+
+const parseInputDate = (value: string) => {
+  const [year, month, day] = value
+    .split("-")
+    .map(Number);
+
+  if (
+    !year ||
+    !month ||
+    !day
+  ) {
+    return new Date();
+  }
+
+  const date = new Date(
+    year,
+    month - 1,
+    day
+  );
+
+  return isNaN(date.getTime())
+    ? new Date()
+    : date;
+};
+
+// ======================================================
 // MAIN COMPONENT
 // ======================================================
 
@@ -148,10 +193,24 @@ export default function AdminOrders() {
     useState<string | null>(null);
 
   // ====================================================
+  // DELETE CONFIRMATION STATE
+  // ====================================================
+
+  const [deleteModalVisible, setDeleteModalVisible] =
+    useState(false);
+
+  const [deleteTarget, setDeleteTarget] =
+    useState<Order | null>(null);
+
+  const [deleting, setDeleting] =
+    useState(false);
+
+  // ====================================================
   // FORM STATE
   // ====================================================
 
-  const [form, setForm] = useState(initialForm);
+  const [form, setForm] =
+    useState(initialForm);
 
   const [showDatePicker, setShowDatePicker] =
     useState(false);
@@ -164,13 +223,16 @@ export default function AdminOrders() {
   // ====================================================
 
   useEffect(() => {
-    const ordersRef = collection(db, "orders");
+    const ordersRef = collection(
+      db,
+      "orders"
+    );
 
     const unsubscribe = onSnapshot(
       ordersRef,
       (snapshot) => {
-        const data: Order[] = snapshot.docs.map(
-          (item) => {
+        const data: Order[] =
+          snapshot.docs.map((item) => {
             const value = item.data();
 
             return {
@@ -198,8 +260,7 @@ export default function AdminOrders() {
                 (value.status as OrderStatus) ??
                 "pending",
             };
-          }
-        );
+          });
 
         setOrders(data);
         setLoading(false);
@@ -228,9 +289,15 @@ export default function AdminOrders() {
 
   const openAddModal = () => {
     setEditingId(null);
-    setForm(initialForm);
+
+    setForm({
+      ...initialForm,
+      deadline: new Date(),
+    });
+
     setStatusPickerVisible(false);
     setShowDatePicker(false);
+
     setModalVisible(true);
   };
 
@@ -242,23 +309,31 @@ export default function AdminOrders() {
     setEditingId(order.id);
 
     const parsedDate = order.deadline
-      ? new Date(order.deadline)
+      ? parseInputDate(order.deadline)
       : new Date();
 
     setForm({
-      customerName: order.customerName,
-      product: order.product,
-      quantity: String(order.quantity),
+      customerName:
+        order.customerName,
 
-      deadline: isNaN(parsedDate.getTime())
-        ? new Date()
-        : parsedDate,
+      product:
+        order.product,
 
-      status: order.status,
+      quantity:
+        String(order.quantity),
+
+      deadline:
+        isNaN(parsedDate.getTime())
+          ? new Date()
+          : parsedDate,
+
+      status:
+        order.status,
     });
 
     setStatusPickerVisible(false);
     setShowDatePicker(false);
+
     setModalVisible(true);
   };
 
@@ -270,7 +345,12 @@ export default function AdminOrders() {
     if (saving) return;
 
     setModalVisible(false);
-    setForm(initialForm);
+
+    setForm({
+      ...initialForm,
+      deadline: new Date(),
+    });
+
     setEditingId(null);
     setShowDatePicker(false);
     setStatusPickerVisible(false);
@@ -321,9 +401,9 @@ export default function AdminOrders() {
       // --------------------------------------------
 
       const formattedDeadline =
-        form.deadline
-          .toISOString()
-          .split("T")[0];
+        formatDateForInput(
+          form.deadline
+        );
 
       // --------------------------------------------
       // COMMON ORDER DATA
@@ -355,7 +435,11 @@ export default function AdminOrders() {
 
       if (editingId) {
         await updateDoc(
-          doc(db, "orders", editingId),
+          doc(
+            db,
+            "orders",
+            editingId
+          ),
           orderData
         );
       }
@@ -365,12 +449,14 @@ export default function AdminOrders() {
       // ============================================
 
       else {
-        // Generate kode unik
         const orderCode =
           await generateUniqueOrderCode();
 
         await addDoc(
-          collection(db, "orders"),
+          collection(
+            db,
+            "orders"
+          ),
           {
             ...orderData,
 
@@ -392,11 +478,15 @@ export default function AdminOrders() {
       // --------------------------------------------
 
       setModalVisible(false);
-      setForm(initialForm);
+
+      setForm({
+        ...initialForm,
+        deadline: new Date(),
+      });
+
       setEditingId(null);
       setShowDatePicker(false);
       setStatusPickerVisible(false);
-
     } catch (error) {
       console.error(
         "Save order error:",
@@ -416,105 +506,187 @@ export default function AdminOrders() {
   // DELETE ORDER
   // ====================================================
 
-  const deleteOrder = (id: string) => {
-  Alert.alert(
-    "Hapus Order",
-    "Order ini dan planning yang terkait akan ikut dihapus. Apakah kamu yakin?",
-    [
-      {
-        text: "Batal",
-        style: "cancel",
-      },
+  const executeDeleteOrder = async (
+    id: string
+  ) => {
+    if (deleting) return;
 
-      {
-        text: "Hapus",
-        style: "destructive",
+    try {
+      setDeleting(true);
 
-        onPress: async () => {
-          try {
-            // ============================================
-            // CARI PLANNING YANG TERKAIT DENGAN ORDER
-            // ============================================
+      // ============================================
+      // CARI PLANNING YANG TERKAIT DENGAN ORDER
+      // ============================================
 
-            const planningRef = collection(
+      const planningRef =
+        collection(
+          db,
+          "planning"
+        );
+
+      const planningQuery =
+        query(
+          planningRef,
+          where(
+            "orderId",
+            "==",
+            id
+          )
+        );
+
+      const planningSnapshot =
+        await getDocs(
+          planningQuery
+        );
+
+      // ============================================
+      // BATCH DELETE
+      // ============================================
+
+      const batch =
+        writeBatch(db);
+
+      // Hapus semua planning terkait
+      planningSnapshot.docs.forEach(
+        (planningDoc) => {
+          batch.delete(
+            doc(
               db,
-              "planning"
-            );
+              "planning",
+              planningDoc.id
+            )
+          );
+        }
+      );
 
-            const planningQuery = query(
-              planningRef,
-              where("orderId", "==", id)
-            );
+      // Hapus order
+      batch.delete(
+        doc(
+          db,
+          "orders",
+          id
+        )
+      );
 
-            const planningSnapshot =
-              await getDocs(planningQuery);
+      // Jalankan semua penghapusan
+      await batch.commit();
 
-            // ============================================
-            // BATCH DELETE
-            // ============================================
+      console.log(
+        "Order dan planning terkait berhasil dihapus"
+      );
 
-            const batch = writeBatch(db);
+      // Tutup modal web
+      setDeleteModalVisible(false);
+      setDeleteTarget(null);
+    } catch (error) {
+      console.error(
+        "Delete order and planning error:",
+        error
+      );
 
-            // Hapus semua planning terkait
-            planningSnapshot.docs.forEach(
-              (planningDoc) => {
-                batch.delete(
-                  doc(
-                    db,
-                    "planning",
-                    planningDoc.id
-                  )
-                );
-              }
-            );
-
-            // Hapus order
-            batch.delete(
-              doc(db, "orders", id)
-            );
-
-            // Jalankan semua penghapusan
-            await batch.commit();
-
-            console.log(
-              "Order dan planning terkait berhasil dihapus"
-            );
-
-          } catch (error) {
-            console.error(
-              "Delete order and planning error:",
-              error
-            );
-
-            Alert.alert(
-              "Error",
-              "Gagal menghapus order dan planning terkait."
-            );
-          }
-        },
-      },
-    ]
-  );
-};
+      Alert.alert(
+        "Error",
+        "Gagal menghapus order dan planning terkait."
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // ====================================================
-  // DATE CHANGE
+  // REQUEST DELETE
+  // ====================================================
+
+  const deleteOrder = (
+    order: Order
+  ) => {
+    // ============================================
+    // WEB
+    // ============================================
+
+    if (Platform.OS === "web") {
+      setDeleteTarget(order);
+      setDeleteModalVisible(true);
+
+      return;
+    }
+
+    // ============================================
+    // MOBILE
+    // ============================================
+
+    Alert.alert(
+      "Hapus Order",
+      "Order ini dan planning yang terkait akan ikut dihapus. Apakah kamu yakin?",
+      [
+        {
+          text: "Batal",
+          style: "cancel",
+        },
+
+        {
+          text: "Hapus",
+          style: "destructive",
+
+          onPress: async () => {
+            await executeDeleteOrder(
+              order.id
+            );
+          },
+        },
+      ]
+    );
+  };
+
+  // ====================================================
+  // CANCEL DELETE
+  // ====================================================
+
+  const cancelDelete = () => {
+    if (deleting) return;
+
+    setDeleteModalVisible(false);
+    setDeleteTarget(null);
+  };
+
+  // ====================================================
+  // DATE CHANGE MOBILE
   // ====================================================
 
   const handleDateChange = (
     event: DateTimePickerEvent,
     selectedDate?: Date
   ) => {
-    setShowDatePicker(
-      Platform.OS === "ios"
-    );
+    if (
+      Platform.OS === "android"
+    ) {
+      setShowDatePicker(false);
+    }
 
     if (selectedDate) {
       setForm((prev) => ({
         ...prev,
-        deadline: selectedDate,
+        deadline:
+          selectedDate,
       }));
     }
+  };
+
+  // ====================================================
+  // WEB DATE CHANGE
+  // ====================================================
+
+  const handleWebDateChange = (
+    value: string
+  ) => {
+    const selectedDate =
+      parseInputDate(value);
+
+    setForm((prev) => ({
+      ...prev,
+      deadline:
+        selectedDate,
+    }));
   };
 
   // ====================================================
@@ -524,9 +696,16 @@ export default function AdminOrders() {
   const formatDateLabel = (
     dateString: string
   ) => {
-    const d = new Date(dateString);
+    const d =
+      parseInputDate(
+        dateString
+      );
 
-    if (isNaN(d.getTime())) {
+    if (
+      isNaN(
+        d.getTime()
+      )
+    ) {
       return dateString;
     }
 
@@ -549,7 +728,8 @@ export default function AdminOrders() {
   ) => {
     const config =
       STATUS_OPTIONS.find(
-        (s) => s.value === status
+        (s) =>
+          s.value === status
       ) ||
       STATUS_OPTIONS[0];
 
@@ -588,47 +768,60 @@ export default function AdminOrders() {
     item: Order;
   }) => {
     return (
-      <View style={styles.card}>
-
+      <View
+        style={styles.card}
+      >
         {/* ============================================
             CARD HEADER
         ============================================ */}
 
-        <View style={styles.cardHeader}>
-
+        <View
+          style={
+            styles.cardHeader
+          }
+        >
           <View
             style={{
               flex: 1,
               paddingRight: 10,
             }}
           >
-
             {/* ORDER CODE */}
 
-            <Text style={styles.orderCode}>
+            <Text
+              style={
+                styles.orderCode
+              }
+            >
               {item.orderCode ||
                 "SO-------"}
             </Text>
 
             {/* CUSTOMER */}
 
-            <Text style={styles.customer}>
+            <Text
+              style={
+                styles.customer
+              }
+            >
               {item.customerName}
             </Text>
-
           </View>
 
           {renderStatusBadge(
             item.status
           )}
-
         </View>
 
         {/* ============================================
             PRODUCT
         ============================================ */}
 
-        <Text style={styles.product}>
+        <Text
+          style={
+            styles.product
+          }
+        >
           {item.product}
         </Text>
 
@@ -636,61 +829,82 @@ export default function AdminOrders() {
             DETAILS
         ============================================ */}
 
-        <View style={styles.detailsRow}>
-
-          <View style={styles.detailItem}>
-
+        <View
+          style={
+            styles.detailsRow
+          }
+        >
+          <View
+            style={
+              styles.detailItem
+            }
+          >
             <Text
-              style={styles.detailLabel}
+              style={
+                styles.detailLabel
+              }
             >
               Jumlah
             </Text>
 
             <Text
-              style={styles.detailValue}
+              style={
+                styles.detailValue
+              }
             >
               {item.quantity} pcs
             </Text>
-
           </View>
 
-          <View style={styles.detailItem}>
-
+          <View
+            style={
+              styles.detailItem
+            }
+          >
             <Text
-              style={styles.detailLabel}
+              style={
+                styles.detailLabel
+              }
             >
               Deadline
             </Text>
 
             <Text
-              style={styles.detailValue}
+              style={
+                styles.detailValue
+              }
             >
               {formatDateLabel(
                 item.deadline
               )}
             </Text>
-
           </View>
-
         </View>
 
         {/* ============================================
             ACTIONS
         ============================================ */}
 
-        <View style={styles.actions}>
-
+        <View
+          style={
+            styles.actions
+          }
+        >
           <Pressable
             style={[
               styles.actionBtn,
               styles.editButton,
             ]}
             onPress={() =>
-              openEditModal(item)
+              openEditModal(
+                item
+              )
             }
           >
             <Text
-              style={styles.editText}
+              style={
+                styles.editText
+              }
             >
               Edit
             </Text>
@@ -702,18 +916,18 @@ export default function AdminOrders() {
               styles.deleteButton,
             ]}
             onPress={() =>
-              deleteOrder(item.id)
+              deleteOrder(item)
             }
           >
             <Text
-              style={styles.deleteText}
+              style={
+                styles.deleteText
+              }
             >
               Hapus
             </Text>
           </Pressable>
-
         </View>
-
       </View>
     );
   };
@@ -724,7 +938,9 @@ export default function AdminOrders() {
 
   if (loading) {
     return (
-      <View style={styles.center}>
+      <View
+        style={styles.center}
+      >
         <ActivityIndicator
           size="large"
           color="#4F46E5"
@@ -738,35 +954,48 @@ export default function AdminOrders() {
   // ====================================================
 
   return (
-    <View style={styles.container}>
-
+    <View
+      style={styles.container}
+    >
       {/* ================================================
           HEADER
       ================================================ */}
 
-      <View style={styles.header}>
-
+      <View
+        style={styles.header}
+      >
         <View>
-
-          <Text style={styles.title}>
+          <Text
+            style={styles.title}
+          >
             Orders
           </Text>
 
-          <Text style={styles.subtitle}>
+          <Text
+            style={
+              styles.subtitle
+            }
+          >
             Kelola order RocketPrintz
           </Text>
-
         </View>
 
         <Pressable
-          style={styles.addButton}
-          onPress={openAddModal}
+          style={
+            styles.addButton
+          }
+          onPress={
+            openAddModal
+          }
         >
-          <Text style={styles.addText}>
+          <Text
+            style={
+              styles.addText
+            }
+          >
             + Tambah
           </Text>
         </Pressable>
-
       </View>
 
       {/* ================================================
@@ -778,7 +1007,9 @@ export default function AdminOrders() {
         keyExtractor={(item) =>
           item.id
         }
-        renderItem={renderOrder}
+        renderItem={
+          renderOrder
+        }
         contentContainerStyle={
           orders.length === 0
             ? styles.emptyContainer
@@ -788,47 +1019,54 @@ export default function AdminOrders() {
           false
         }
         ListEmptyComponent={
-          <View style={styles.emptyBox}>
-
+          <View
+            style={
+              styles.emptyBox
+            }
+          >
             <Text
-              style={styles.emptyTitle}
+              style={
+                styles.emptyTitle
+              }
             >
               Belum Ada Order
             </Text>
 
             <Text
-              style={styles.emptySubtitle}
+              style={
+                styles.emptySubtitle
+              }
             >
               Klik tombol "+ Tambah"
-              untuk memasukkan orderan
-              baru.
+              untuk memasukkan
+              orderan baru.
             </Text>
-
           </View>
         }
       />
 
       {/* ================================================
-          MODAL FORM
+          ADD / EDIT MODAL
       ================================================ */}
 
       <Modal
-        visible={modalVisible}
+        visible={
+          modalVisible
+        }
         animationType="fade"
         transparent
         onRequestClose={
           closeModal
         }
       >
-
         <View
           style={
             styles.modalBackground
           }
         >
-
-          <View style={styles.modal}>
-
+          <View
+            style={styles.modal}
+          >
             {/* MODAL TITLE */}
 
             <Text
@@ -846,7 +1084,6 @@ export default function AdminOrders() {
                 false
               }
             >
-
               {/* ==========================================
                   CUSTOMER
               ========================================== */}
@@ -860,13 +1097,17 @@ export default function AdminOrders() {
               </Text>
 
               <TextInput
-                style={styles.input}
+                style={
+                  styles.input
+                }
                 placeholder="Contoh: Budi Santoso"
                 placeholderTextColor="#9CA3AF"
                 value={
                   form.customerName
                 }
-                onChangeText={(value) =>
+                onChangeText={(
+                  value
+                ) =>
                   setForm({
                     ...form,
                     customerName:
@@ -888,14 +1129,21 @@ export default function AdminOrders() {
               </Text>
 
               <TextInput
-                style={styles.input}
+                style={
+                  styles.input
+                }
                 placeholder="Contoh: Banner 3x1 m"
                 placeholderTextColor="#9CA3AF"
-                value={form.product}
-                onChangeText={(value) =>
+                value={
+                  form.product
+                }
+                onChangeText={(
+                  value
+                ) =>
                   setForm({
                     ...form,
-                    product: value,
+                    product:
+                      value,
                   })
                 }
               />
@@ -913,17 +1161,22 @@ export default function AdminOrders() {
               </Text>
 
               <TextInput
-                style={styles.input}
+                style={
+                  styles.input
+                }
                 placeholder="0"
                 placeholderTextColor="#9CA3AF"
                 keyboardType="numeric"
                 value={
                   form.quantity
                 }
-                onChangeText={(value) =>
+                onChangeText={(
+                  value
+                ) =>
                   setForm({
                     ...form,
-                    quantity: value,
+                    quantity:
+                      value,
                   })
                 }
               />
@@ -940,53 +1193,92 @@ export default function AdminOrders() {
                 Deadline
               </Text>
 
-              <Pressable
-                style={
-                  styles.pickerSelector
-                }
-                onPress={() =>
-                  setShowDatePicker(
-                    true
-                  )
-                }
-              >
+              {/* ==========================================
+                  WEB DATE PICKER
+              ========================================== */}
 
-                <Text
+              {Platform.OS ===
+                "web" ? (
+                <View
                   style={
-                    styles.pickerSelectorText
+                    styles.webDateContainer
                   }
                 >
-                  {form.deadline.toLocaleDateString(
-                    "id-ID",
-                    {
-                      day: "numeric",
-                      month: "long",
-                      year: "numeric",
+                  <input
+                    type="date"
+                    value={formatDateForInput(
+                      form.deadline
+                    )}
+                    min={formatDateForInput(
+                      new Date()
+                    )}
+                    onChange={(
+                      event
+                    ) =>
+                      handleWebDateChange(
+                        event
+                          .target
+                          .value
+                      )
                     }
+                    style={
+                      styles.webDateInput
+                    }
+                  />
+                </View>
+              ) : (
+                <>
+                  {/* ==========================================
+                      MOBILE DATE SELECTOR
+                  ========================================== */}
+
+                  <Pressable
+                    style={
+                      styles.pickerSelector
+                    }
+                    onPress={() =>
+                      setShowDatePicker(
+                        true
+                      )
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.pickerSelectorText
+                      }
+                    >
+                      {form.deadline.toLocaleDateString(
+                        "id-ID",
+                        {
+                          day: "numeric",
+                          month: "long",
+                          year: "numeric",
+                        }
+                      )}
+                    </Text>
+                  </Pressable>
+
+                  {showDatePicker && (
+                    <DateTimePicker
+                      value={
+                        form.deadline
+                      }
+                      mode="date"
+                      display={
+                        Platform.OS ===
+                        "ios"
+                          ? "spinner"
+                          : "default"
+                      }
+                      onChange={
+                        handleDateChange
+                      }
+                      minimumDate={
+                        new Date()
+                      }
+                    />
                   )}
-                </Text>
-
-              </Pressable>
-
-              {showDatePicker && (
-                <DateTimePicker
-                  value={
-                    form.deadline
-                  }
-                  mode="date"
-                  display={
-                    Platform.OS ===
-                    "ios"
-                      ? "spinner"
-                      : "default"
-                  }
-                  onChange={
-                    handleDateChange
-                  }
-                  minimumDate={
-                    new Date()
-                  }
-                />
+                </>
               )}
 
               {/* ==========================================
@@ -1011,7 +1303,6 @@ export default function AdminOrders() {
                   )
                 }
               >
-
                 <Text
                   style={
                     styles.pickerSelectorText
@@ -1025,7 +1316,6 @@ export default function AdminOrders() {
                     )?.label
                   }
                 </Text>
-
               </Pressable>
 
               {/* STATUS OPTIONS */}
@@ -1036,10 +1326,8 @@ export default function AdminOrders() {
                     styles.statusOptionsContainer
                   }
                 >
-
                   {STATUS_OPTIONS.map(
                     (opt) => (
-
                       <Pressable
                         key={
                           opt.value
@@ -1051,7 +1339,6 @@ export default function AdminOrders() {
                             styles.statusOptionActive,
                         ]}
                         onPress={() => {
-
                           setForm({
                             ...form,
                             status:
@@ -1061,10 +1348,8 @@ export default function AdminOrders() {
                           setStatusPickerVisible(
                             false
                           );
-
                         }}
                       >
-
                         <View
                           style={[
                             styles.statusDot,
@@ -1087,15 +1372,11 @@ export default function AdminOrders() {
                             opt.label
                           }
                         </Text>
-
                       </Pressable>
-
                     )
                   )}
-
                 </View>
               )}
-
             </ScrollView>
 
             {/* ==========================================
@@ -1107,7 +1388,6 @@ export default function AdminOrders() {
                 styles.modalActions
               }
             >
-
               <Pressable
                 style={
                   styles.cancelButton
@@ -1115,7 +1395,9 @@ export default function AdminOrders() {
                 onPress={
                   closeModal
                 }
-                disabled={saving}
+                disabled={
+                  saving
+                }
               >
                 <Text
                   style={
@@ -1135,9 +1417,10 @@ export default function AdminOrders() {
                 onPress={
                   saveOrder
                 }
-                disabled={saving}
+                disabled={
+                  saving
+                }
               >
-
                 {saving ? (
                   <ActivityIndicator
                     size="small"
@@ -1152,17 +1435,170 @@ export default function AdminOrders() {
                     Simpan
                   </Text>
                 )}
-
               </Pressable>
-
             </View>
-
           </View>
-
         </View>
-
       </Modal>
 
+      {/* ================================================
+          WEB DELETE CONFIRMATION MODAL
+      ================================================ */}
+
+      <Modal
+        visible={
+          deleteModalVisible
+        }
+        animationType="fade"
+        transparent
+        onRequestClose={
+          cancelDelete
+        }
+      >
+        <View
+          style={
+            styles.deleteModalBackground
+          }
+        >
+          <View
+            style={
+              styles.deleteModal
+            }
+          >
+            {/* ICON */}
+
+            <View
+              style={
+                styles.deleteIconCircle
+              }
+            >
+              <Text
+                style={
+                  styles.deleteIconText
+                }
+              >
+                !
+              </Text>
+            </View>
+
+            {/* TITLE */}
+
+            <Text
+              style={
+                styles.deleteModalTitle
+              }
+            >
+              Hapus Order?
+            </Text>
+
+            {/* DESCRIPTION */}
+
+            <Text
+              style={
+                styles.deleteModalMessage
+              }
+            >
+              Order ini dan planning
+              yang terkait akan ikut
+              dihapus. Apakah kamu
+              yakin?
+            </Text>
+
+            {/* ORDER INFO */}
+
+            {deleteTarget && (
+              <View
+                style={
+                  styles.deleteOrderInfo
+                }
+              >
+                <Text
+                  style={
+                    styles.deleteOrderCode
+                  }
+                >
+                  {
+                    deleteTarget.orderCode
+                  }
+                </Text>
+
+                <Text
+                  style={
+                    styles.deleteCustomer
+                  }
+                >
+                  {
+                    deleteTarget.customerName
+                  }
+                </Text>
+              </View>
+            )}
+
+            {/* BUTTONS */}
+
+            <View
+              style={
+                styles.deleteModalActions
+              }
+            >
+              <Pressable
+                style={
+                  styles.deleteCancelButton
+                }
+                onPress={
+                  cancelDelete
+                }
+                disabled={
+                  deleting
+                }
+              >
+                <Text
+                  style={
+                    styles.deleteCancelText
+                  }
+                >
+                  Batal
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={[
+                  styles.deleteConfirmButton,
+                  deleting &&
+                    styles.deleteConfirmButtonDisabled,
+                ]}
+                onPress={() => {
+                  if (
+                    deleteTarget
+                  ) {
+                    executeDeleteOrder(
+                      deleteTarget.id
+                    );
+                  }
+                }}
+                disabled={
+                  deleting
+                }
+              >
+                {deleting ? (
+                  <ActivityIndicator
+                    size="small"
+                    color="#FFFFFF"
+                  />
+                ) : (
+                  <Text
+                    style={
+                      styles.deleteConfirmText
+                    }
+                  >
+                    Hapus
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1172,7 +1608,6 @@ export default function AdminOrders() {
 // ======================================================
 
 const styles = StyleSheet.create({
-
   // ====================================================
   // CONTAINER
   // ====================================================
@@ -1462,6 +1897,30 @@ const styles = StyleSheet.create({
   },
 
   // ====================================================
+  // WEB DATE INPUT
+  // ====================================================
+
+  webDateContainer: {
+    width: "100%",
+  },
+
+  webDateInput: {
+    width: "100%",
+    height: 44,
+    boxSizing: "border-box",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#E5E7EB",
+    borderRadius: 10,
+    paddingLeft: 14,
+    paddingRight: 14,
+    fontSize: 14,
+    color: "#111827",
+    backgroundColor: "#F9FAFB",
+    outlineStyle: "none",
+  } as any,
+
+  // ====================================================
   // PICKER
   // ====================================================
 
@@ -1562,4 +2021,122 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
+  // ====================================================
+  // DELETE WEB MODAL
+  // ====================================================
+
+  deleteModalBackground: {
+    flex: 1,
+    backgroundColor:
+      "rgba(17, 24, 39, 0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+
+  deleteModal: {
+    width: "100%",
+    maxWidth: 440,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 24,
+    alignItems: "center",
+
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+
+  deleteIconCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#FEF2F2",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+
+  deleteIconText: {
+    color: "#EF4444",
+    fontSize: 26,
+    fontWeight: "800",
+  },
+
+  deleteModalTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#111827",
+    marginBottom: 8,
+  },
+
+  deleteModalMessage: {
+    fontSize: 14,
+    lineHeight: 21,
+    color: "#6B7280",
+    textAlign: "center",
+    marginBottom: 16,
+  },
+
+  deleteOrderInfo: {
+    width: "100%",
+    backgroundColor: "#F9FAFB",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 20,
+  },
+
+  deleteOrderCode: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#4F46E5",
+    marginBottom: 3,
+  },
+
+  deleteCustomer: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111827",
+  },
+
+  deleteModalActions: {
+    width: "100%",
+    flexDirection: "row",
+    gap: 10,
+  },
+
+  deleteCancelButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    backgroundColor: "#F3F4F6",
+  },
+
+  deleteCancelText: {
+    color: "#4B5563",
+    fontWeight: "700",
+  },
+
+  deleteConfirmButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    backgroundColor: "#EF4444",
+  },
+
+  deleteConfirmButtonDisabled: {
+    opacity: 0.6,
+  },
+
+  deleteConfirmText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
 });

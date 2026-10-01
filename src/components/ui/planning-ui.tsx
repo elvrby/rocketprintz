@@ -1,6 +1,10 @@
 // src/components/ui/planning-ui.tsx
+
 import DateTimePicker from "@react-native-community/datetimepicker";
+import React from "react";
+
 import {
+    Alert,
     FlatList,
     Modal,
     Platform,
@@ -23,7 +27,10 @@ export type PlanningUIOrder = {
   customerName: string;
   product: string;
   quantity: number;
+
+  // Deadline order
   deadline: string;
+
   status: string;
 };
 
@@ -68,6 +75,7 @@ type Props = {
   status: PlanningStatus;
 
   showDatePicker: boolean;
+
   activePicker:
     | "order"
     | "machine"
@@ -204,12 +212,251 @@ export default function PlanningUI({
 }: Props) {
   const isMobile = width < 768;
 
+  // ======================================================
+  // DATE HELPERS
+  // ======================================================
+
+  /**
+   * Mengubah string YYYY-MM-DD
+   * menjadi Date lokal.
+   */
+  const parseDate = (
+    dateString?: string
+  ): Date | null => {
+    if (!dateString) {
+      return null;
+    }
+
+    const parts = dateString.split("-");
+
+    if (parts.length !== 3) {
+      return null;
+    }
+
+    const year = Number(parts[0]);
+    const month = Number(parts[1]);
+    const day = Number(parts[2]);
+
+    if (
+      !year ||
+      !month ||
+      !day
+    ) {
+      return null;
+    }
+
+    const date = new Date(
+      year,
+      month - 1,
+      day
+    );
+
+    date.setHours(
+      0,
+      0,
+      0,
+      0
+    );
+
+    return date;
+  };
+
+  /**
+   * Format Date menjadi YYYY-MM-DD.
+   */
   const formatDate = (
     date: Date
+  ): string => {
+    const year =
+      date.getFullYear();
+
+    const month =
+      String(
+        date.getMonth() + 1
+      ).padStart(2, "0");
+
+    const day =
+      String(
+        date.getDate()
+      ).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+  };
+
+  /**
+   * Deadline order yang sedang dipilih.
+   */
+  const selectedDeadline =
+    parseDate(
+      selectedOrder?.deadline
+    );
+
+  /**
+   * Mengubah tanggal produksi.
+   *
+   * Jika tanggal lebih besar
+   * dari deadline, otomatis
+   * dikembalikan ke deadline.
+   */
+  const handleScheduledDateChange = (
+    date: Date
   ) => {
-    return date
-      .toISOString()
-      .split("T")[0];
+    const newDate =
+      new Date(date);
+
+    newDate.setHours(
+      0,
+      0,
+      0,
+      0
+    );
+
+    if (selectedDeadline) {
+      const deadline =
+        new Date(
+          selectedDeadline
+        );
+
+      deadline.setHours(
+        0,
+        0,
+        0,
+        0
+      );
+
+      if (
+        newDate > deadline
+      ) {
+        setScheduledDate(
+          deadline
+        );
+
+        return;
+      }
+    }
+
+    setScheduledDate(
+      newDate
+    );
+  };
+
+  /**
+   * Handler khusus Web.
+   *
+   * Digunakan oleh:
+   * <input type="date">
+   */
+  const handleWebDateChange = (
+    value: string
+  ) => {
+    if (!value) {
+      return;
+    }
+
+    const selectedDate =
+      parseDate(value);
+
+    if (!selectedDate) {
+      return;
+    }
+
+    handleScheduledDateChange(
+      selectedDate
+    );
+  };
+
+  /**
+   * Saat order dipilih.
+   *
+   * Jika tanggal planning sekarang
+   * melewati deadline order,
+   * otomatis dikembalikan ke deadline.
+   */
+  const handleSelectOrder = (
+    order: PlanningUIOrder
+  ) => {
+    setOrderId(
+      order.id
+    );
+
+    const deadline =
+      parseDate(
+        order.deadline
+      );
+
+    if (deadline) {
+      const currentDate =
+        new Date(
+          scheduledDate
+        );
+
+      currentDate.setHours(
+        0,
+        0,
+        0,
+        0
+      );
+
+      if (
+        currentDate > deadline
+      ) {
+        setScheduledDate(
+          deadline
+        );
+      }
+    }
+
+    setActivePicker(
+      null
+    );
+  };
+
+  /**
+   * Konfirmasi hapus yang
+   * kompatibel dengan Web
+   * dan Mobile.
+   */
+  const handleDeletePlanning = (
+    id: string
+  ) => {
+    // ==============================================
+    // WEB
+    // ==============================================
+
+    if (Platform.OS === "web") {
+      const confirmed =
+        window.confirm(
+          "Apakah Anda yakin ingin menghapus planning ini?"
+        );
+
+      if (confirmed) {
+        deletePlanning(id);
+      }
+
+      return;
+    }
+
+    // ==============================================
+    // ANDROID / IOS
+    // ==============================================
+
+    Alert.alert(
+      "Hapus Planning",
+      "Apakah Anda yakin ingin menghapus planning ini?",
+      [
+        {
+          text: "Batal",
+          style: "cancel",
+        },
+        {
+          text: "Hapus",
+          style: "destructive",
+          onPress: () => {
+            deletePlanning(id);
+          },
+        },
+      ]
+    );
   };
 
   const getStatusConfig = (
@@ -228,8 +475,11 @@ export default function PlanningUI({
   };
 
   return (
-    <View style={styles.container}>
-
+    <View
+      style={
+        styles.container
+      }
+    >
       {/* ==================================================
           HEADER
       ================================================== */}
@@ -277,7 +527,9 @@ export default function PlanningUI({
             pressed &&
               styles.pressedOpacity,
           ]}
-          onPress={openAddModal}
+          onPress={
+            openAddModal
+          }
         >
           <Text
             style={[
@@ -311,7 +563,9 @@ export default function PlanningUI({
         keyboardShouldPersistTaps="handled"
         ListEmptyComponent={
           <View
-            style={styles.empty}
+            style={
+              styles.empty
+            }
           >
             <View
               style={
@@ -319,20 +573,26 @@ export default function PlanningUI({
               }
             >
               <Text
-                style={styles.emptyIcon}
+                style={
+                  styles.emptyIcon
+                }
               >
                 📋
               </Text>
             </View>
 
             <Text
-              style={styles.emptyTitle}
+              style={
+                styles.emptyTitle
+              }
             >
               Belum ada planning
             </Text>
 
             <Text
-              style={styles.emptyText}
+              style={
+                styles.emptyText
+              }
             >
               Buat jadwal produksi pertama
               Anda untuk mulai mengelola
@@ -374,7 +634,9 @@ export default function PlanningUI({
                         styles.orderCode
                       }
                     >
-                      {item.orderCode}
+                      {
+                        item.orderCode
+                      }
                     </Text>
                   ) : null}
 
@@ -433,13 +695,17 @@ export default function PlanningUI({
                       },
                     ]}
                   >
-                    {statusConfig.label}
+                    {
+                      statusConfig.label
+                    }
                   </Text>
                 </View>
               </View>
 
               <View
-                style={styles.divider}
+                style={
+                  styles.divider
+                }
               />
 
               {/* INFO */}
@@ -458,7 +724,9 @@ export default function PlanningUI({
                     "-"
                   }
                   icon="📅"
-                  isMobile={isMobile}
+                  isMobile={
+                    isMobile
+                  }
                 />
 
                 <InfoItem
@@ -468,7 +736,9 @@ export default function PlanningUI({
                     "-"
                   }
                   icon="⚙️"
-                  isMobile={isMobile}
+                  isMobile={
+                    isMobile
+                  }
                 />
 
                 <InfoItem
@@ -478,7 +748,9 @@ export default function PlanningUI({
                     "-"
                   }
                   icon="👤"
-                  isMobile={isMobile}
+                  isMobile={
+                    isMobile
+                  }
                 />
 
                 <InfoItem
@@ -490,7 +762,9 @@ export default function PlanningUI({
                       : "-"
                   }
                   icon="📦"
-                  isMobile={isMobile}
+                  isMobile={
+                    isMobile
+                  }
                 />
               </View>
 
@@ -539,7 +813,7 @@ export default function PlanningUI({
                       styles.pressedOpacity,
                   ]}
                   onPress={() =>
-                    deletePlanning(
+                    handleDeletePlanning(
                       item.id
                     )
                   }
@@ -565,7 +839,9 @@ export default function PlanningUI({
       ================================================== */}
 
       <Modal
-        visible={modalVisible}
+        visible={
+          modalVisible
+        }
         animationType="fade"
         transparent
         onRequestClose={
@@ -586,7 +862,6 @@ export default function PlanningUI({
                 styles.modalMobile,
             ]}
           >
-
             {/* MODAL HEADER */}
 
             <View
@@ -633,11 +908,14 @@ export default function PlanningUI({
                   styles.formContainerMobile,
               ]}
             >
-
-              {/* ORDER */}
+              {/* ==================================================
+                  ORDER
+              ================================================== */}
 
               <Text
-                style={styles.label}
+                style={
+                  styles.label
+                }
               >
                 Pilih Order
               </Text>
@@ -676,23 +954,42 @@ export default function PlanningUI({
                   </Text>
 
                   {selectedOrder && (
-                    <Text
-                      style={
-                        styles.selectSubtext
-                      }
-                    >
-                      {selectedOrder.orderCode
-                        ? `${selectedOrder.orderCode} • `
-                        : ""}
-                      {
-                        selectedOrder.customerName
-                      }
-                      {" • "}
-                      {
-                        selectedOrder.quantity
-                      }
-                      {" pcs"}
-                    </Text>
+                    <>
+                      <Text
+                        style={
+                          styles.selectSubtext
+                        }
+                      >
+                        {selectedOrder.orderCode
+                          ? `${selectedOrder.orderCode} • `
+                          : ""}
+
+                        {
+                          selectedOrder.customerName
+                        }
+
+                        {" • "}
+
+                        {
+                          selectedOrder.quantity
+                        }
+
+                        {" pcs"}
+                      </Text>
+
+                      {selectedOrder.deadline ? (
+                        <Text
+                          style={
+                            styles.deadlineText
+                          }
+                        >
+                          Deadline:{" "}
+                          {
+                            selectedOrder.deadline
+                          }
+                        </Text>
+                      ) : null}
+                    </>
                   )}
                 </View>
 
@@ -749,14 +1046,11 @@ export default function PlanningUI({
                           style={
                             styles.dropdownOption
                           }
-                          onPress={() => {
-                            setOrderId(
-                              o.id
-                            );
-                            setActivePicker(
-                              null
-                            );
-                          }}
+                          onPress={() =>
+                            handleSelectOrder(
+                              o
+                            )
+                          }
                         >
                           {o.orderCode ? (
                             <Text
@@ -764,7 +1058,9 @@ export default function PlanningUI({
                                 styles.optionCode
                               }
                             >
-                              {o.orderCode}
+                              {
+                                o.orderCode
+                              }
                             </Text>
                           ) : null}
 
@@ -773,7 +1069,9 @@ export default function PlanningUI({
                               styles.optionTitle
                             }
                           >
-                            {o.product}
+                            {
+                              o.product
+                            }
                           </Text>
 
                           <Text
@@ -781,11 +1079,31 @@ export default function PlanningUI({
                               styles.optionSubtext
                             }
                           >
-                            {o.customerName}
+                            {
+                              o.customerName
+                            }
+
                             {" • "}
-                            {o.quantity}
+
+                            {
+                              o.quantity
+                            }
+
                             {" pcs"}
                           </Text>
+
+                          {o.deadline ? (
+                            <Text
+                              style={
+                                styles.optionDeadline
+                              }
+                            >
+                              Deadline:{" "}
+                              {
+                                o.deadline
+                              }
+                            </Text>
+                          ) : null}
                         </Pressable>
                       )
                     )
@@ -793,10 +1111,14 @@ export default function PlanningUI({
                 </View>
               )}
 
-              {/* MACHINE */}
+              {/* ==================================================
+                  MACHINE
+              ================================================== */}
 
               <Text
-                style={styles.label}
+                style={
+                  styles.label
+                }
               >
                 Mesin
               </Text>
@@ -858,6 +1180,7 @@ export default function PlanningUI({
                           setMachine(
                             m
                           );
+
                           setActivePicker(
                             null
                           );
@@ -876,10 +1199,14 @@ export default function PlanningUI({
                 </View>
               )}
 
-              {/* OPERATOR */}
+              {/* ==================================================
+                  OPERATOR
+              ================================================== */}
 
               <Text
-                style={styles.label}
+                style={
+                  styles.label
+                }
               >
                 Operator
               </Text>
@@ -968,6 +1295,7 @@ export default function PlanningUI({
                             setOperatorId(
                               op.id
                             );
+
                             setActivePicker(
                               null
                             );
@@ -995,28 +1323,40 @@ export default function PlanningUI({
                 </View>
               )}
 
-              {/* DATE */}
+              {/* ==================================================
+                  DATE
+              ================================================== */}
 
               <Text
-                style={styles.label}
+                style={
+                  styles.label
+                }
               >
                 Tanggal Produksi
               </Text>
 
               <Pressable
-                style={
-                  styles.selectInput
-                }
-                onPress={() =>
+                style={[
+                  styles.selectInput,
+                  selectedDeadline &&
+                    scheduledDate >
+                      selectedDeadline &&
+                    styles.dateErrorInput,
+                ]}
+                onPress={() => {
                   setShowDatePicker(
                     true
-                  )
-                }
+                  );
+                }}
               >
                 <Text
-                  style={
-                    styles.selectValue
-                  }
+                  style={[
+                    styles.selectValue,
+                    selectedDeadline &&
+                      scheduledDate >
+                        selectedDeadline &&
+                      styles.dateErrorText,
+                  ]}
                 >
                   📅{" "}
                   {formatDate(
@@ -1025,40 +1365,193 @@ export default function PlanningUI({
                 </Text>
               </Pressable>
 
-              {showDatePicker && (
-                <DateTimePicker
-                  value={
-                    scheduledDate
+              {selectedDeadline && (
+                <Text
+                  style={
+                    styles.deadlineHint
                   }
-                  mode="date"
-                  display={
-                    Platform.OS ===
-                    "ios"
-                      ? "spinner"
-                      : "default"
-                  }
-                  onChange={(
-                    event,
-                    date
-                  ) => {
-                    setShowDatePicker(
-                      Platform.OS ===
-                        "ios"
-                    );
-
-                    if (date) {
-                      setScheduledDate(
-                        date
-                      );
-                    }
-                  }}
-                />
+                >
+                  Maksimal tanggal produksi:{" "}
+                  {formatDate(
+                    selectedDeadline
+                  )}
+                </Text>
               )}
 
-              {/* STATUS */}
+              {selectedDeadline &&
+                scheduledDate >
+                  selectedDeadline && (
+                  <Text
+                    style={
+                      styles.dateErrorMessage
+                    }
+                  >
+                    Tanggal produksi tidak boleh
+                    melebihi deadline order.
+                  </Text>
+                )}
+
+              {/* ==================================================
+                  MOBILE DATE PICKER
+              ================================================== */}
+
+              {showDatePicker &&
+                Platform.OS !== "web" && (
+                  <DateTimePicker
+                    value={
+                      scheduledDate
+                    }
+                    mode="date"
+                    display={
+                      Platform.OS ===
+                      "ios"
+                        ? "spinner"
+                        : "default"
+                    }
+                    maximumDate={
+                      selectedDeadline ||
+                      undefined
+                    }
+                    onChange={(
+                      event,
+                      date
+                    ) => {
+                      /**
+                       * Android:
+                       * picker langsung ditutup
+                       * setelah memilih tanggal.
+                       *
+                       * iOS:
+                       * tetap terbuka karena
+                       * menggunakan spinner.
+                       */
+                      if (
+                        Platform.OS !==
+                        "ios"
+                      ) {
+                        setShowDatePicker(
+                          false
+                        );
+                      }
+
+                      if (date) {
+                        handleScheduledDateChange(
+                          date
+                        );
+                      }
+                    }}
+                  />
+                )}
+
+              {/* ==================================================
+                  WEB DATE PICKER
+              ================================================== */}
+
+              {showDatePicker &&
+                Platform.OS === "web" && (
+                  <View
+                    style={
+                      styles.webDatePickerContainer
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.webDateLabel
+                      }
+                    >
+                      Pilih tanggal produksi
+                    </Text>
+
+                    {React.createElement(
+                      "input",
+                      {
+                        type: "date",
+
+                        value:
+                          formatDate(
+                            scheduledDate
+                          ),
+
+                        /**
+                         * Tidak ada tanggal
+                         * minimum khusus.
+                         *
+                         * Yang dibatasi hanya
+                         * tanggal maksimum
+                         * sesuai deadline.
+                         */
+                        max:
+                          selectedDeadline
+                            ? formatDate(
+                                selectedDeadline
+                              )
+                            : undefined,
+
+                        onChange: (
+                          event: React.ChangeEvent<HTMLInputElement>
+                        ) => {
+                          handleWebDateChange(
+                            event.target
+                              .value
+                          );
+                        },
+
+                        onBlur: () => {
+                          setShowDatePicker(
+                            false
+                          );
+                        },
+
+                        style: {
+                          width:
+                            "100%",
+                          height:
+                            44,
+                          border:
+                            "1px solid #e2e8f0",
+                          borderRadius:
+                            10,
+                          paddingLeft:
+                            12,
+                          paddingRight:
+                            12,
+                          fontSize:
+                            14,
+                          color:
+                            "#0f172a",
+                          backgroundColor:
+                            "#f8fafc",
+                          boxSizing:
+                            "border-box",
+                          outline:
+                            "none",
+                        },
+                      }
+                    )}
+
+                    {selectedDeadline && (
+                      <Text
+                        style={
+                          styles.webDateHint
+                        }
+                      >
+                        Maksimal:{" "}
+                        {formatDate(
+                          selectedDeadline
+                        )}
+                      </Text>
+                    )}
+                  </View>
+                )}
+
+              {/* ==================================================
+                  STATUS
+              ================================================== */}
 
               <Text
-                style={styles.label}
+                style={
+                  styles.label
+                }
               >
                 Status Produksi
               </Text>
@@ -1123,6 +1616,7 @@ export default function PlanningUI({
                           setStatus(
                             opt.value
                           );
+
                           setActivePicker(
                             null
                           );
@@ -1137,7 +1631,9 @@ export default function PlanningUI({
                             },
                           ]}
                         >
-                          {opt.label}
+                          {
+                            opt.label
+                          }
                         </Text>
                       </Pressable>
                     )
@@ -1145,7 +1641,9 @@ export default function PlanningUI({
                 </View>
               )}
 
-              {/* SAVE */}
+              {/* ==================================================
+                  SAVE
+              ================================================== */}
 
               <Pressable
                 style={({ pressed }) => [
@@ -1155,9 +1653,26 @@ export default function PlanningUI({
                   pressed &&
                     styles.pressedOpacity,
                 ]}
-                onPress={
-                  savePlanning
-                }
+                onPress={() => {
+                  /**
+                   * Safety validation:
+                   * Jangan izinkan save jika
+                   * tanggal melewati deadline.
+                   */
+                  if (
+                    selectedDeadline &&
+                    scheduledDate >
+                      selectedDeadline
+                  ) {
+                    setScheduledDate(
+                      selectedDeadline
+                    );
+
+                    return;
+                  }
+
+                  savePlanning();
+                }}
               >
                 <Text
                   style={
@@ -1241,6 +1756,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#f8fafc",
   },
 
+  // ====================================================
+  // HEADER
+  // ====================================================
+
   header: {
     paddingHorizontal: 24,
     paddingTop: 16,
@@ -1310,6 +1829,10 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
 
+  // ====================================================
+  // LIST
+  // ====================================================
+
   list: {
     paddingHorizontal: 24,
     paddingBottom: 24,
@@ -1321,6 +1844,10 @@ const styles = StyleSheet.create({
     paddingBottom: 110,
     gap: 12,
   },
+
+  // ====================================================
+  // CARD
+  // ====================================================
 
   card: {
     backgroundColor: "#ffffff",
@@ -1410,6 +1937,10 @@ const styles = StyleSheet.create({
     marginVertical: 14,
   },
 
+  // ====================================================
+  // INFO
+  // ====================================================
+
   infoGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1448,6 +1979,10 @@ const styles = StyleSheet.create({
   infoValueMobile: {
     fontSize: 12,
   },
+
+  // ====================================================
+  // CARD ACTION
+  // ====================================================
 
   cardFooter: {
     flexDirection: "row",
@@ -1496,6 +2031,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 
+  // ====================================================
+  // EMPTY
+  // ====================================================
+
   empty: {
     alignItems: "center",
     justifyContent: "center",
@@ -1530,6 +2069,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
     maxWidth: 280,
   },
+
+  // ====================================================
+  // MODAL
+  // ====================================================
 
   modalOverlay: {
     flex: 1,
@@ -1587,6 +2130,10 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
+  // ====================================================
+  // FORM
+  // ====================================================
+
   formContainer: {
     paddingTop: 12,
     paddingBottom: 10,
@@ -1643,11 +2190,70 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
+  deadlineText: {
+    fontSize: 10,
+    color: "#dc2626",
+    fontWeight: "600",
+    marginTop: 3,
+  },
+
+  deadlineHint: {
+    fontSize: 11,
+    color: "#64748b",
+    marginTop: 5,
+  },
+
+  dateErrorInput: {
+    borderColor: "#ef4444",
+    backgroundColor: "#fff7f7",
+  },
+
+  dateErrorText: {
+    color: "#dc2626",
+  },
+
+  dateErrorMessage: {
+    fontSize: 11,
+    color: "#dc2626",
+    marginTop: 4,
+    fontWeight: "500",
+  },
+
+  // ====================================================
+  // WEB DATE PICKER
+  // ====================================================
+
+  webDatePickerContainer: {
+    marginTop: 8,
+    padding: 10,
+    backgroundColor: "#f8fafc",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+
+  webDateLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#64748b",
+    marginBottom: 6,
+  },
+
+  webDateHint: {
+    fontSize: 10,
+    color: "#64748b",
+    marginTop: 5,
+  },
+
   arrowIcon: {
     fontSize: 10,
     color: "#94a3b8",
     marginLeft: 10,
   },
+
+  // ====================================================
+  // DROPDOWN
+  // ====================================================
 
   dropdownContainer: {
     borderWidth: 1,
@@ -1683,6 +2289,13 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
+  optionDeadline: {
+    fontSize: 10,
+    color: "#dc2626",
+    fontWeight: "600",
+    marginTop: 4,
+  },
+
   dropdownEmpty: {
     padding: 16,
     alignItems: "center",
@@ -1701,6 +2314,10 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 4,
   },
+
+  // ====================================================
+  // SAVE
+  // ====================================================
 
   saveButton: {
     backgroundColor: "#0f172a",
@@ -1721,4 +2338,3 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
-

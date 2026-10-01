@@ -1,6 +1,5 @@
 // src/app/(supervisor)/planning.tsx
 
-import * as Print from "expo-print";
 import {
   collection,
   onSnapshot,
@@ -8,9 +7,11 @@ import {
   query,
 } from "firebase/firestore";
 import { useEffect, useState } from "react";
+
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,6 +19,8 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+
+import * as Print from "expo-print";
 
 import { db } from "../../firebase/config";
 
@@ -27,6 +30,10 @@ import {
   WorkOrderPlanning,
 } from "../../components/print/work-order-template";
 
+
+// =====================================================
+// TYPES
+// =====================================================
 
 type Planning = {
   id: string;
@@ -38,7 +45,6 @@ type Planning = {
   status: string;
 };
 
-
 type Order = {
   id: string;
   orderCode?: string;
@@ -49,175 +55,135 @@ type Order = {
 };
 
 
-export default function SupervisorPlanning() {
+// =====================================================
+// COMPONENT
+// =====================================================
 
+export default function SupervisorPlanning() {
   const { width } = useWindowDimensions();
 
   const isDesktop = width >= 768;
 
+  const [planning, setPlanning] = useState<Planning[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [planning, setPlanning] =
-    useState<Planning[]>([]);
-
-  const [orders, setOrders] =
-    useState<Order[]>([]);
-
-  const [loading, setLoading] =
-    useState(true);
-
-  const [printingId, setPrintingId] =
-    useState<string | null>(null);
+  // Menyimpan ID planning yang sedang diprint
+  const [printingId, setPrintingId] = useState<string | null>(null);
 
 
-  /* =========================
-     FIREBASE
-  ========================= */
+  // ===================================================
+  // LOAD FIRESTORE DATA
+  // ===================================================
 
   useEffect(() => {
-
     const planningQuery = query(
       collection(db, "planning"),
       orderBy("scheduledDate", "asc")
     );
 
-
     const unsubPlanning = onSnapshot(
       planningQuery,
-
       (snapshot) => {
-
-        const data: Planning[] =
-          snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...(doc.data() as Omit<
-              Planning,
-              "id"
-            >),
-          }));
+        const data: Planning[] = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...(doc.data() as Omit<Planning, "id">),
+        }));
 
         setPlanning(data);
-
         setLoading(false);
       },
-
       (error) => {
-
-        console.error(
-          "Planning error:",
-          error
-        );
+        console.error("Planning error:", error);
 
         setLoading(false);
       }
     );
 
 
+    // -----------------------------------------------
+    // LOAD ORDERS
+    // -----------------------------------------------
+
     const unsubOrders = onSnapshot(
       collection(db, "orders"),
-
       (snapshot) => {
-
-        const data: Order[] =
-          snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...(doc.data() as Omit<
-              Order,
-              "id"
-            >),
-          }));
+        const data: Order[] = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...(doc.data() as Omit<Order, "id">),
+        }));
 
         setOrders(data);
       },
-
       (error) => {
-
-        console.error(
-          "Orders error:",
-          error
-        );
+        console.error("Orders error:", error);
       }
     );
 
 
     return () => {
-
       unsubPlanning();
-
       unsubOrders();
-
     };
-
   }, []);
 
 
-  /* =========================
-     FIND ORDER
-  ========================= */
+  // ===================================================
+  // FIND ORDER
+  // ===================================================
 
-  const getOrder = (
-    orderId: string
-  ) => {
-
+  const getOrder = (orderId: string) => {
     return orders.find(
-      (order) =>
-        order.id === orderId
+      (order) => order.id === orderId
     );
-
   };
 
 
-  /* =========================
-     STATUS
-  ========================= */
+  // ===================================================
+  // STATUS STYLE
+  // ===================================================
 
-  const getStatusStyle = (
-    status: string
-  ) => {
-
+  const getStatusStyle = (status: string) => {
     switch (status) {
-
       case "running":
-
         return {
           backgroundColor: "#dbeafe",
           color: "#2563eb",
         };
 
-
       case "completed":
-
         return {
           backgroundColor: "#dcfce7",
           color: "#15803d",
         };
 
-
       case "cancelled":
-
         return {
           backgroundColor: "#fee2e2",
           color: "#dc2626",
         };
 
-
-      default:
-
+      case "planned":
         return {
           backgroundColor: "#fef3c7",
           color: "#b45309",
         };
 
+      default:
+        return {
+          backgroundColor: "#fef3c7",
+          color: "#b45309",
+        };
     }
-
   };
 
 
-  const getStatusLabel = (
-    status: string
-  ) => {
+  // ===================================================
+  // STATUS LABEL
+  // ===================================================
 
+  const getStatusLabel = (status: string) => {
     switch (status) {
-
       case "running":
         return "Running";
 
@@ -230,78 +196,153 @@ export default function SupervisorPlanning() {
       case "planned":
         return "Planned";
 
+      case "pending":
+        return "Pending";
+
       default:
         return status || "Pending";
-
     }
-
   };
 
 
-  /* =========================
-     PRINT WORK ORDER
-  ========================= */
+  // ===================================================
+  // PRINT WORK ORDER
+  // ===================================================
 
   const handlePrintWorkOrder = async (
     item: Planning
   ) => {
+    const order = getOrder(item.orderId);
 
-    const order =
-      getOrder(item.orderId);
 
+    // -----------------------------------------------
+    // CHECK ORDER
+    // -----------------------------------------------
 
     if (!order) {
-
       Alert.alert(
         "Order tidak ditemukan",
         "Order yang terhubung dengan planning ini tidak ditemukan."
       );
 
       return;
-
     }
 
 
     try {
-
       setPrintingId(item.id);
 
 
-      const planningData:
-        WorkOrderPlanning = {
+      // ---------------------------------------------
+      // PREPARE PLANNING DATA
+      // ---------------------------------------------
+
+      const planningData: WorkOrderPlanning = {
         id: item.id,
+
         orderId: item.orderId,
+
         machine: item.machine,
+
         operatorId: item.operatorId,
+
         operatorName: item.operatorName,
-        scheduledDate:
-          item.scheduledDate,
+
+        scheduledDate: item.scheduledDate,
+
         status: item.status,
       };
 
 
-      const orderData:
-        WorkOrderOrder = {
+      // ---------------------------------------------
+      // PREPARE ORDER DATA
+      // ---------------------------------------------
+
+      const orderData: WorkOrderOrder = {
         id: order.id,
-        orderCode:
-          order.orderCode,
-        customerName:
-          order.customerName,
-        product:
-          order.product,
-        quantity:
-          order.quantity,
-        deadline:
-          order.deadline,
+
+        orderCode: order.orderCode,
+
+        customerName: order.customerName,
+
+        product: order.product,
+
+        quantity: order.quantity,
+
+        deadline: order.deadline,
       };
 
 
-      const html =
-        generateWorkOrderHTML({
-          planning: planningData,
-          order: orderData,
-        });
+      // ---------------------------------------------
+      // GENERATE HTML
+      // ---------------------------------------------
 
+      const html = generateWorkOrderHTML({
+        planning: planningData,
+        order: orderData,
+      });
+
+
+      // =================================================
+      // WEB PRINT
+      // =================================================
+
+      if (Platform.OS === "web") {
+
+        const printWindow = window.open(
+          "",
+          "_blank",
+          "width=900,height=700"
+        );
+
+
+        // Browser memblokir popup
+        if (!printWindow) {
+          Alert.alert(
+            "Print gagal",
+            "Browser memblokir popup. Silakan izinkan popup untuk website RocketPrintz."
+          );
+
+          return;
+        }
+
+
+        // ---------------------------------------------
+        // WRITE HTML TO NEW WINDOW
+        // ---------------------------------------------
+
+        printWindow.document.open();
+
+        printWindow.document.write(html);
+
+        printWindow.document.close();
+
+
+        // ---------------------------------------------
+        // FOCUS WINDOW
+        // ---------------------------------------------
+
+        printWindow.focus();
+
+
+        // ---------------------------------------------
+        // WAIT FOR HTML TO LOAD
+        // ---------------------------------------------
+
+        setTimeout(() => {
+
+          printWindow.print();
+
+        }, 500);
+
+
+        return;
+      }
+
+
+      // =================================================
+      // ANDROID / IOS PRINT
+      // =================================================
 
       await Print.printAsync({
         html,
@@ -325,16 +366,14 @@ export default function SupervisorPlanning() {
       setPrintingId(null);
 
     }
-
   };
 
 
-  /* =========================
-     LOADING
-  ========================= */
+  // ===================================================
+  // LOADING
+  // ===================================================
 
   if (loading) {
-
     return (
       <View style={styles.center}>
 
@@ -350,16 +389,14 @@ export default function SupervisorPlanning() {
 
       </View>
     );
-
   }
 
 
-  /* =========================
-     UI
-  ========================= */
+  // ===================================================
+  // UI
+  // ===================================================
 
   return (
-
     <ScrollView
       style={styles.container}
 
@@ -369,12 +406,12 @@ export default function SupervisorPlanning() {
           styles.desktopContent,
       ]}
 
-      showsVerticalScrollIndicator={
-        false
-      }
+      showsVerticalScrollIndicator={false}
     >
 
-      {/* HEADER */}
+      {/* =================================================
+          HEADER
+      ================================================= */}
 
       <View style={styles.header}>
 
@@ -410,7 +447,9 @@ export default function SupervisorPlanning() {
       </View>
 
 
-      {/* EMPTY */}
+      {/* =================================================
+          EMPTY
+      ================================================= */}
 
       {planning.length === 0 ? (
 
@@ -432,6 +471,10 @@ export default function SupervisorPlanning() {
 
       ) : (
 
+        /* =================================================
+           LIST
+        ================================================= */
+
         <View
           style={[
             styles.list,
@@ -445,11 +488,16 @@ export default function SupervisorPlanning() {
             const order =
               getOrder(item.orderId);
 
+
             const status =
               getStatusStyle(
                 item.status
               );
 
+
+            // -------------------------------------------
+            // ORDER CODE
+            // -------------------------------------------
 
             const orderCode =
               order?.orderCode ||
@@ -458,24 +506,34 @@ export default function SupervisorPlanning() {
                 .toUpperCase()}`;
 
 
+            const isPrinting =
+              printingId === item.id;
+
+
             return (
 
               <View
                 key={item.id}
+
                 style={[
                   styles.card,
+
                   isDesktop &&
                     styles.desktopCard,
                 ]}
               >
 
-                {/* CARD HEADER */}
+                {/* ======================================
+                    CARD HEADER
+                ====================================== */}
 
                 <View
                   style={
                     styles.cardHeader
                   }
                 >
+
+                  {/* ORDER CODE */}
 
                   <View
                     style={
@@ -491,6 +549,7 @@ export default function SupervisorPlanning() {
                       ORDER CODE
                     </Text>
 
+
                     <Text
                       style={
                         styles.orderCode
@@ -502,9 +561,12 @@ export default function SupervisorPlanning() {
                   </View>
 
 
+                  {/* STATUS */}
+
                   <View
                     style={[
                       styles.status,
+
                       {
                         backgroundColor:
                           status.backgroundColor,
@@ -515,6 +577,7 @@ export default function SupervisorPlanning() {
                     <Text
                       style={[
                         styles.statusText,
+
                         {
                           color:
                             status.color,
@@ -531,7 +594,9 @@ export default function SupervisorPlanning() {
                 </View>
 
 
-                {/* PRODUCTION INFO */}
+                {/* ======================================
+                    MACHINE + SCHEDULE
+                ====================================== */}
 
                 <View
                   style={
@@ -539,8 +604,12 @@ export default function SupervisorPlanning() {
                   }
                 >
 
+                  {/* MACHINE */}
+
                   <View
-                    style={styles.infoBox}
+                    style={
+                      styles.infoBox
+                    }
                   >
 
                     <Text
@@ -550,6 +619,7 @@ export default function SupervisorPlanning() {
                     >
                       MESIN
                     </Text>
+
 
                     <Text
                       style={
@@ -563,8 +633,12 @@ export default function SupervisorPlanning() {
                   </View>
 
 
+                  {/* SCHEDULE DATE */}
+
                   <View
-                    style={styles.infoBox}
+                    style={
+                      styles.infoBox
+                    }
                   >
 
                     <Text
@@ -574,6 +648,7 @@ export default function SupervisorPlanning() {
                     >
                       SCHEDULE DATE
                     </Text>
+
 
                     <Text
                       style={
@@ -589,7 +664,9 @@ export default function SupervisorPlanning() {
                 </View>
 
 
-                {/* ORDER */}
+                {/* ======================================
+                    ORDER
+                ====================================== */}
 
                 <View
                   style={
@@ -624,31 +701,44 @@ export default function SupervisorPlanning() {
                 </View>
 
 
-                {/* DIVIDER */}
+                {/* ======================================
+                    DIVIDER
+                ====================================== */}
 
                 <View
                   style={styles.divider}
                 />
 
 
-                {/* BOTTOM */}
+                {/* ======================================
+                    OPERATOR + QUANTITY
+                ====================================== */}
 
                 <View
                   style={styles.bottomRow}
                 >
 
+                  {/* OPERATOR */}
+
                   <View
-                    style={styles.bottomItem}
+                    style={
+                      styles.bottomItem
+                    }
                   >
 
                     <Text
-                      style={styles.label}
+                      style={
+                        styles.label
+                      }
                     >
                       Operator
                     </Text>
 
+
                     <Text
-                      style={styles.value}
+                      style={
+                        styles.value
+                      }
                     >
                       {item.operatorName ||
                         "-"}
@@ -657,18 +747,27 @@ export default function SupervisorPlanning() {
                   </View>
 
 
+                  {/* QUANTITY */}
+
                   <View
-                    style={styles.bottomItem}
+                    style={
+                      styles.bottomItem
+                    }
                   >
 
                     <Text
-                      style={styles.label}
+                      style={
+                        styles.label
+                      }
                     >
                       Quantity
                     </Text>
 
+
                     <Text
-                      style={styles.value}
+                      style={
+                        styles.value
+                      }
                     >
                       {order?.quantity ??
                         "-"}
@@ -679,33 +778,50 @@ export default function SupervisorPlanning() {
                 </View>
 
 
-                {/* PRINT BUTTON */}
+                {/* ======================================
+                    PRINT BUTTON
+                ====================================== */}
 
                 <Pressable
-                  style={[
-                    styles.printButton,
-                    printingId ===
-                      item.id &&
-                      styles.printButtonDisabled,
-                  ]}
-                  disabled={
-                    printingId ===
-                    item.id
-                  }
+
+                  disabled={isPrinting}
+
                   onPress={() =>
                     handlePrintWorkOrder(
                       item
                     )
                   }
+
+                  style={[
+                    styles.printButton,
+
+                    isPrinting &&
+                      styles.printButtonDisabled,
+                  ]}
                 >
 
-                  {printingId ===
-                  item.id ? (
+                  {isPrinting ? (
 
-                    <ActivityIndicator
-                      size="small"
-                      color="#ffffff"
-                    />
+                    <View
+                      style={
+                        styles.printLoading
+                      }
+                    >
+
+                      <ActivityIndicator
+                        size="small"
+                        color="#ffffff"
+                      />
+
+                      <Text
+                        style={
+                          styles.printButtonText
+                        }
+                      >
+                        Menyiapkan print...
+                      </Text>
+
+                    </View>
 
                   ) : (
 
@@ -722,25 +838,20 @@ export default function SupervisorPlanning() {
                 </Pressable>
 
               </View>
-
             );
-
           })}
 
         </View>
-
       )}
 
     </ScrollView>
-
   );
-
 }
 
 
-/* =========================
-   STYLES
-========================= */
+// =====================================================
+// STYLES
+// =====================================================
 
 const styles = StyleSheet.create({
 
@@ -764,7 +875,9 @@ const styles = StyleSheet.create({
   },
 
 
-  /* HEADER */
+  // ===================================================
+  // HEADER
+  // ===================================================
 
   header: {
     flexDirection: "row",
@@ -790,11 +903,17 @@ const styles = StyleSheet.create({
 
   countBox: {
     backgroundColor: "#ffffff",
+
     borderWidth: 1,
+
     borderColor: "#e5e7eb",
+
     borderRadius: 14,
+
     paddingHorizontal: 18,
+
     paddingVertical: 10,
+
     alignItems: "center",
   },
 
@@ -812,7 +931,9 @@ const styles = StyleSheet.create({
   },
 
 
-  /* LIST */
+  // ===================================================
+  // LIST
+  // ===================================================
 
   list: {
     gap: 14,
@@ -825,13 +946,19 @@ const styles = StyleSheet.create({
   },
 
 
-  /* CARD */
+  // ===================================================
+  // CARD
+  // ===================================================
 
   card: {
     backgroundColor: "#ffffff",
+
     borderRadius: 16,
+
     padding: 18,
+
     borderWidth: 1,
+
     borderColor: "#e5e7eb",
   },
 
@@ -841,92 +968,129 @@ const styles = StyleSheet.create({
   },
 
 
-  /* HEADER */
+  // ===================================================
+  // CARD HEADER
+  // ===================================================
 
   cardHeader: {
     flexDirection: "row",
+
     justifyContent: "space-between",
+
     alignItems: "flex-start",
   },
 
 
   orderCodeBox: {
     backgroundColor: "#f3f4f6",
+
     borderRadius: 9,
+
     paddingHorizontal: 10,
+
     paddingVertical: 7,
   },
 
 
   orderCodeLabel: {
     fontSize: 8,
+
     fontWeight: "700",
+
     color: "#9ca3af",
+
     letterSpacing: 0.7,
+
     marginBottom: 2,
   },
 
 
   orderCode: {
     fontSize: 13,
+
     fontWeight: "700",
+
     color: "#111827",
   },
 
 
-  /* STATUS */
+  // ===================================================
+  // STATUS
+  // ===================================================
 
   status: {
     paddingHorizontal: 10,
+
     paddingVertical: 5,
+
     borderRadius: 20,
   },
 
 
   statusText: {
     fontSize: 11,
+
     fontWeight: "600",
+
     textTransform: "capitalize",
   },
 
 
-  /* PRODUCTION */
+  // ===================================================
+  // PRODUCTION INFO
+  // ===================================================
 
   productionInfo: {
     flexDirection: "row",
+
     gap: 12,
+
     marginTop: 18,
   },
 
 
   infoBox: {
     flex: 1,
+
     backgroundColor: "#f9fafb",
+
     borderRadius: 10,
+
     paddingHorizontal: 12,
+
     paddingVertical: 10,
+
     borderWidth: 1,
+
     borderColor: "#f0f0f0",
   },
 
 
   infoLabel: {
     fontSize: 9,
+
     fontWeight: "700",
+
     color: "#9ca3af",
+
     letterSpacing: 0.5,
+
     marginBottom: 4,
   },
 
 
   infoValue: {
     fontSize: 13,
+
     fontWeight: "600",
+
     color: "#374151",
   },
 
 
-  /* ORDER */
+  // ===================================================
+  // ORDER
+  // ===================================================
 
   orderSection: {
     marginTop: 18,
@@ -935,40 +1099,55 @@ const styles = StyleSheet.create({
 
   sectionLabel: {
     fontSize: 10,
+
     fontWeight: "700",
+
     color: "#9ca3af",
+
     letterSpacing: 1,
+
     marginBottom: 7,
   },
 
 
   customer: {
     fontSize: 16,
+
     fontWeight: "600",
+
     color: "#111827",
   },
 
 
   product: {
     marginTop: 3,
+
     fontSize: 13,
+
     color: "#6b7280",
   },
 
 
-  /* DIVIDER */
+  // ===================================================
+  // DIVIDER
+  // ===================================================
 
   divider: {
     height: 1,
+
     backgroundColor: "#f0f0f0",
+
     marginVertical: 16,
   },
 
 
-  /* BOTTOM */
+  // ===================================================
+  // BOTTOM
+  // ===================================================
 
   bottomRow: {
     flexDirection: "row",
+
     gap: 60,
   },
 
@@ -980,28 +1159,40 @@ const styles = StyleSheet.create({
 
   label: {
     fontSize: 11,
+
     color: "#9ca3af",
+
     marginBottom: 4,
   },
 
 
   value: {
     fontSize: 13,
+
     fontWeight: "600",
+
     color: "#374151",
   },
 
 
-  /* PRINT */
+  // ===================================================
+  // PRINT BUTTON
+  // ===================================================
 
   printButton: {
     marginTop: 18,
+
     backgroundColor: "#111827",
+
     borderRadius: 10,
-    paddingVertical: 11,
-    alignItems: "center",
-    justifyContent: "center",
+
     minHeight: 42,
+
+    paddingVertical: 11,
+
+    alignItems: "center",
+
+    justifyContent: "center",
   },
 
 
@@ -1010,51 +1201,81 @@ const styles = StyleSheet.create({
   },
 
 
+  printLoading: {
+    flexDirection: "row",
+
+    alignItems: "center",
+
+    justifyContent: "center",
+
+    gap: 8,
+  },
+
+
   printButtonText: {
     color: "#ffffff",
+
     fontSize: 13,
+
     fontWeight: "600",
   },
 
 
-  /* LOADING */
+  // ===================================================
+  // LOADING
+  // ===================================================
 
   center: {
     flex: 1,
+
     justifyContent: "center",
+
     alignItems: "center",
+
     backgroundColor: "#f6f7f9",
   },
 
 
   loadingText: {
     marginTop: 10,
+
     color: "#6b7280",
   },
 
 
-  /* EMPTY */
+  // ===================================================
+  // EMPTY
+  // ===================================================
 
   empty: {
     backgroundColor: "#ffffff",
+
     borderRadius: 16,
+
     padding: 40,
+
     alignItems: "center",
+
     borderWidth: 1,
+
     borderColor: "#e5e7eb",
   },
 
 
   emptyTitle: {
     fontSize: 16,
+
     fontWeight: "600",
+
     color: "#111827",
   },
 
 
   emptyText: {
     marginTop: 6,
+
     fontSize: 13,
+
     color: "#9ca3af",
   },
 
